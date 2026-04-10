@@ -413,6 +413,8 @@ fn run_install(dev: bool) -> io::Result<()> {
             cargo binstall cargo-outdated --no-confirm;
             info "cargo binstall cargo-sort";
             cargo binstall cargo-sort --no-confirm;
+            info "cargo binstall cargo-audio";
+            cargo binstall cargo-audit --no-confirm;
         )?;
     }
     Ok(())
@@ -469,6 +471,16 @@ fn run_format_and_lint(check_only: bool) -> io::Result<()> {
         info "test_utils: cargo clippy and fmt"
         cargo clippy --all-targets --all-features --tests --manifest-path=$TEST_UTILS_PATH/Cargo.toml -- $clippy_check_only;
         cargo fmt --all $check --manifest-path=$TEST_UTILS_PATH/Cargo.toml;
+
+        info "cargo audit";
+        cargo audit;
+        info "Builder: cargo audit";
+        cargo audit --file=$BUILDER_PATH/Cargo.lock --no-fetch;
+        info "VSCode extension: cargo audit";
+        cargo audit --file=$VSCODE_PATH/Cargo.lock --no-fetch;
+        info "test_utils: cargo clippy and fmt"
+        cargo audit --file=$TEST_UTILS_PATH/Cargo.lock --no-fetch;
+
         info "cargo sort";
         cargo sort $check;
         cd $BUILDER_PATH;
@@ -487,7 +499,9 @@ fn run_format_and_lint(check_only: bool) -> io::Result<()> {
         eslint_args.push(eslint_check)
     }
     run_script("npx", &eslint_args, CLIENT_PATH, true)?;
-    run_script("npx", &eslint_args, VSCODE_PATH, true)
+    run_script("npx", &eslint_args, VSCODE_PATH, true)?;
+    run_script("pnpm", &["audit", "--prod"], CLIENT_PATH, false)?;
+    run_script("pnpm", &["audit", "--prod"], VSCODE_PATH, false)
 }
 
 fn run_test() -> io::Result<()> {
