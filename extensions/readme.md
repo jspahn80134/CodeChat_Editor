@@ -1,5 +1,5 @@
 `readme.py` - Overview of extensions
-================================================================================
+====================================
 
 The goal of the CodeChat Editor is to provide extensions for a number of IDEs
 and environments. To support this, an explicit design goal of the Editor is to

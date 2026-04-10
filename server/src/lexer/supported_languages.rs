@@ -15,13 +15,13 @@
 /// [http://www.gnu.org/licenses](http://www.gnu.org/licenses).
 ///
 /// `supported_languages.rs` - Provide lexer info for all supported languages
-/// ============================================================================
+/// =========================================================================
 ///
 /// This file contains a data structure which describes all supported languages;
 /// the [lexer](../lexer.rs) uses this lex a given language.
 ///
 /// Lexer implementation
-/// ----------------------------------------------------------------------------
+/// --------------------
 ///
 /// Ordering matters: all these delimiters end up in a large regex separated by
 /// an or operator. The regex or operator matches from left to right. So, longer
@@ -45,7 +45,7 @@
 /// doesn't parse the string correctly, it does correctly identify where
 /// comments can't be, which is all that the lexer needs to do.
 // Imports
-// -----------------------------------------------------------------------------
+// -------
 //
 // ### Standard library
 use std::sync::Arc;
@@ -59,7 +59,7 @@ use super::{
 pub const MARKDOWN_MODE: &str = "markdown";
 
 // Helper functions
-// -----------------------------------------------------------------------------
+// ----------------
 //
 // These functions simplify the syntax needed to create a `LanguageLexer`.
 #[allow(clippy::too_many_arguments)]
@@ -125,7 +125,7 @@ fn make_block_comment_delim(opening: &str, closing: &str, is_nestable: bool) -> 
 }
 
 // Define lexers for each supported language.
-// -----------------------------------------------------------------------------
+// ------------------------------------------
 pub fn get_language_lexer_vec() -> Vec<LanguageLexer> {
     vec![
         // ### Linux shell scripts

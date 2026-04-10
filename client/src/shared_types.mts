@@ -15,7 +15,7 @@
 // [http://www.gnu.org/licenses](http://www.gnu.org/licenses).
 //
 // `shared_types.mts` -- Shared type definitions
-// =============================================================================
+// =============================================
 //
 // The time, in ms, to wait between the last user edit and sending updated data
 // to the Server.

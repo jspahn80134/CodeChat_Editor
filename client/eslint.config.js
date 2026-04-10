@@ -2,8 +2,8 @@
 //
 // This file is part of the CodeChat Editor.
 //
-// The CodeChat Editor is free software: you can redistribute it and/or modify it
-// under the terms of the GNU General Public License as published by the Free
+// The CodeChat Editor is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by the Free
 // Software Foundation, either version 3 of the License, or (at your option) any
 // later version.
 //
@@ -30,7 +30,9 @@ export default defineConfig(
     eslintPluginPrettierRecommended,
     defineConfig([
         {
-            // This must be the only key in this dict to be treated as a global ignore. Only global ignores can ignore directories. See the [docs](https://eslint.org/docs/latest/use/configure/configuration-files#globally-ignoring-files-with-ignores).
+            // This must be the only key in this dict to be treated as a global
+            // ignore. Only global ignores can ignore directories. See the
+            // [docs](https://eslint.org/docs/latest/use/configure/configuration-files#globally-ignoring-files-with-ignores).
             ignores: ["src/third-party/**"],
         },
         {

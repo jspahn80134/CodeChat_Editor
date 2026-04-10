@@ -1,5 +1,5 @@
 // `testing_logger.rs` -- a logger to support unit testing.
-// =============================================================================
+// ========================================================
 //
 // This is a minimally-modified version of the
 // [testing\_logger](https://github.com/brucechapman/rust_testing_logger) crate:
@@ -47,7 +47,7 @@
 //! captured log messages.
 //!
 //! Examples
-//! ============================================================================
+//! ========
 //!
 //! ```
 //! #[macro_use]

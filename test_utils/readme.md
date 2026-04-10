@@ -1,5 +1,5 @@
 `readme.md` - Overview of test utilities
-================================================================================
+========================================
 
 These test utilities are used both in unit tests and in integration tests.
 Integration tests can't access code inside a `#[cfg(test)]` configuration

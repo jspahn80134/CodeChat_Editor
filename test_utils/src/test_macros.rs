@@ -15,14 +15,14 @@
 /// [http://www.gnu.org/licenses](http://www.gnu.org/licenses).
 ///
 /// `test_macros.rs` -- Reusable macros for testing
-/// ============================================================================
+/// ===============================================
 // Imports
-// -----------------------------------------------------------------------------
+// -------
 //
 // None.
 //
 // Macros
-// -----------------------------------------------------------------------------
+// ------
 //
 // Extract a known enum variant or fail. More concise than the alternative (`if
 // let`, or `let else`). From [SO](https://stackoverflow.com/a/69324393). The

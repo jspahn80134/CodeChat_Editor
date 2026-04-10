@@ -19,8 +19,8 @@
 # `vscodeignore` - Files not to package
 # =====================================
 #
-# See [Using
-# .vscodeignore](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#using-.vscodeignore).
+# See
+# [Using .vscodeignore](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#using-.vscodeignore).
 #
 # Omit all TypeScript source.
 src/**

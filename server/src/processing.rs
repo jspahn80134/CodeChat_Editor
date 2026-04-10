@@ -15,9 +15,9 @@
 // [http://www.gnu.org/licenses](http://www.gnu.org/licenses).
 /// `processing.rs` -- Transform source code to its web-editable equivalent and
 /// back
-/// ============================================================================
+/// ===========================================================================
 // Imports
-// -----------------------------------------------------------------------------
+// -------
 //
 // ### Standard library
 //
@@ -76,7 +76,7 @@ use crate::lexer::{
 };
 
 // Data structures
-// -----------------------------------------------------------------------------
+// ---------------
 //
 // ### Translation between a local (traditional) source file and its web-editable, client-side representation
 //
@@ -249,7 +249,7 @@ pub enum TranslationResultsString {
 // On save, the process is CodeChatForWeb -> Vec\<CodeDocBlocks> -> source code.
 //
 // Globals
-// -----------------------------------------------------------------------------
+// -------
 lazy_static! {
     /// Match the lexer directive in a source file.
     static ref LEXER_DIRECTIVE: Regex = Regex::new(r"CodeChat Editor lexer: (\w+)").unwrap();
@@ -328,7 +328,7 @@ const WORD_WRAP_COLUMN: usize = 80;
 const WORD_WRAP_MIN_WIDTH: usize = 40;
 
 // Serialization for `CodeMirrorDocBlock`
-// -----------------------------------------------------------------------------
+// --------------------------------------
 #[derive(Serialize, Deserialize, TS)]
 #[ts(export)]
 struct CodeMirrorDocBlockTuple<'a>(
@@ -380,7 +380,7 @@ impl<'de> Deserialize<'de> for CodeMirrorDocBlock {
 }
 
 // Determine if the provided file is part of a project
-// -----------------------------------------------------------------------------
+// ---------------------------------------------------
 pub fn find_path_to_toc(file_path: &Path) -> Option<PathBuf> {
     // To determine if this source code is part of a project, look for a project
     // file by searching the current directory, then all its parents, for a file
@@ -420,7 +420,7 @@ pub enum CodechatForWebToSourceError {
 }
 
 // Transform `CodeChatForWeb` to source code
-// -----------------------------------------------------------------------------
+// -----------------------------------------
 /// This function takes in a source file in web-editable format (the
 /// `CodeChatForWeb` struct) and transforms it into source code.
 pub fn codechat_for_web_to_source(
@@ -814,7 +814,7 @@ pub enum SourceToCodeChatForWebError {
 }
 
 // Transform from source code to `CodeChatForWeb`
-// -----------------------------------------------------------------------------
+// ----------------------------------------------
 //
 // Given the contents of a file, classify it and (for CodeChat Editor files)
 // convert it to the `CodeChatForWeb` format.
@@ -1840,6 +1840,6 @@ fn html_analyze(
 */
 
 // Tests
-// -----------------------------------------------------------------------------
+// -----
 #[cfg(test)]
 mod tests;

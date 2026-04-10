@@ -1,21 +1,21 @@
 The CodeChat Editor
-================================================================================
+===================
 
 User documentation
-================================================================================
+==================
 
 * [The CodeChat Editor manual](README.md)
 * [The CodeChat Editor extension for Visual Studio Code manual](extensions/VSCode/README.md)
 * [Literate programming using the CodeChat Editor](docs/style_guide.cpp)
 
 Design
-================================================================================
+======
 
 * [CodeChat Editor Design](docs/design.md)
 * [Implementation](docs/implementation.md)
 
 Implementation
-================================================================================
+==============
 
 * [Server](server/readme.md)
   * [main.rs](server/src/main.rs)
@@ -101,7 +101,7 @@ Implementation
     * [dist.toml](server/dist.toml) - additional cargo-dist configuration
 
 Misc
-================================================================================
+====
 
 * [New project template](new-project-template/README.md)
 * [Table of contents](toc.md)

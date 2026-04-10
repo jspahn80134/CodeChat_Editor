@@ -15,10 +15,10 @@
 // [http://www.gnu.org/licenses](http://www.gnu.org/licenses).
 //
 // `c.pest` - Pest parser definition for the C language
-// =============================================================================
+// ====================================================
 //
 // Comments
-// -----------------------------------------------------------------------------
+// --------
 doc_block = _{ inline_comment | block_comment }
 
 // Per the
@@ -50,7 +50,7 @@ block_comment_closing_delim_1 =  { unused }
 block_comment_closing_delim_2 =  { unused }
 
 // Code
-// -----------------------------------------------------------------------------
+// ----
 //
 // Per the
 // [C standard, section 5.1.1.2](https://www.open-std.org/jtc1/sc22/wg14/www/docs/n3220.pdf#page=24),
@@ -83,7 +83,7 @@ logical_line_char   = _{ ("\\" ~ NEWLINE) | not_newline }
 code_line_token = _{ logical_line_char }
 
 // Dedenter
-// -----------------------------------------------------------------------------
+// --------
 //
 // This parser runs separately; it dedents block comments. There are several
 // cases:

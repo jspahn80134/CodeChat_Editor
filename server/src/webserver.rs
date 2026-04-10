@@ -14,14 +14,14 @@
 // the CodeChat Editor. If not, see
 // [http://www.gnu.org/licenses](http://www.gnu.org/licenses).
 /// `webserver.rs` -- Serve CodeChat Editor Client webpages
-/// ============================================================================
+/// =======================================================
 // Submodules
-// -----------------------------------------------------------------------------
+// ----------
 #[cfg(test)]
 pub mod tests;
 
 // Imports
-// -----------------------------------------------------------------------------
+// -------
 //
 // ### Standard library
 use std::{
@@ -96,7 +96,7 @@ use crate::{
 };
 
 // Data structures
-// -----------------------------------------------------------------------------
+// ---------------
 //
 // ### Data structures supporting a websocket connection between the IDE, this
 //
@@ -392,7 +392,7 @@ pub struct Credentials {
 }
 
 // Macros
-// -----------------------------------------------------------------------------
+// ------
 /// Create a macro to report an error when enqueueing an item.
 #[macro_export]
 macro_rules! queue_send {
@@ -421,7 +421,7 @@ macro_rules! queue_send_func {
 }
 
 /// Globals
-/// ----------------------------------------------------------------------------
+/// -------
 // The timeout for a reply from a websocket, in ms. Use a short timeout to speed
 // up unit tests.
 pub const REPLY_TIMEOUT_MS: Duration = if cfg!(test) {
@@ -563,7 +563,7 @@ pub fn set_root_path(
 }
 
 // Webserver functionality
-// -----------------------------------------------------------------------------
+// -----------------------
 #[get("/ping")]
 async fn ping() -> HttpResponse {
     HttpResponse::Ok().body("pong")
@@ -1124,7 +1124,7 @@ fn make_simple_viewer(http_request: &ProcessingTaskHttpRequest, html: &str) -> S
 }
 
 /// Websockets
-/// ----------------------------------------------------------------------------
+/// ----------
 ///
 /// Each CodeChat Editor IDE instance pairs with a CodeChat Editor Client
 /// through the CodeChat Editor Server. Together, these form a joint editor,
@@ -1391,7 +1391,7 @@ pub fn client_websocket(
 }
 
 // Webserver core
-// -----------------------------------------------------------------------------
+// --------------
 #[actix_web::main]
 pub async fn main(
     extension_base_path: Option<&Path>,
@@ -1553,7 +1553,7 @@ where
 }
 
 // Utilities
-// -----------------------------------------------------------------------------
+// ---------
 //
 // Send a response to the client after processing a message from the client.
 pub async fn send_response(client_tx: &Sender<EditorMessage>, id: f64, result: MessageResult) {

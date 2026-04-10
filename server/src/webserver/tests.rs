@@ -14,9 +14,9 @@
 // the CodeChat Editor. If not, see
 // [http://www.gnu.org/licenses](http://www.gnu.org/licenses).
 /// `test.rs` -- Unit tests for the vscode interface
-/// ============================================================================
+/// ================================================
 // Imports
-// -----------------------------------------------------------------------------
+// -------
 //
 // ### Standard library
 use std::path::{MAIN_SEPARATOR_STR, PathBuf};
@@ -34,7 +34,7 @@ use crate::ide::{filewatcher::FILEWATCHER_PATH_PREFIX, vscode::tests::IP_PORT};
 use test_utils::{cast, prep_test_dir};
 
 // Support functions
-// -----------------------------------------------------------------------------
+// -----------------
 //
 // The lint on using `cargo_bin` doesn't apply, since this is only available for
 // integration tests per the
@@ -52,7 +52,7 @@ fn get_server() -> Command {
 }
 
 // Tests
-// -----------------------------------------------------------------------------
+// -----
 #[test]
 fn test_url_to_path() {
     let (temp_dir, test_dir) = prep_test_dir!();

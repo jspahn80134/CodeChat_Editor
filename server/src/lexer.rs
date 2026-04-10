@@ -15,13 +15,13 @@
 // [http://www.gnu.org/licenses](http://www.gnu.org/licenses).
 mod pest_parser;
 /// `lexer.rs` -- Lex source code into code and doc blocks
-/// ============================================================================
+/// ======================================================
 // Submodule definitions
-// -----------------------------------------------------------------------------
+// ---------------------
 pub mod supported_languages;
 
 // Imports
-// -----------------------------------------------------------------------------
+// -------
 //
 // ### Standard library
 #[cfg(feature = "lexer_explain")]
@@ -36,7 +36,7 @@ use regex::Regex;
 use supported_languages::get_language_lexer_vec;
 
 /// Data structures
-/// ----------------------------------------------------------------------------
+/// ---------------
 ///
 /// ### Language definition
 ///
@@ -260,7 +260,7 @@ pub enum CodeDocBlock {
 }
 
 // Globals
-// -----------------------------------------------------------------------------
+// -------
 //
 // Create constant regexes needed by the lexer, following the
 // [Regex docs recommendation](https://docs.rs/regex/1.6.0/regex/index.html#example-avoid-compiling-the-same-regex-in-a-loop).
@@ -596,7 +596,7 @@ fn build_lexer_regex(
 }
 
 // Compile lexers
-// -----------------------------------------------------------------------------
+// --------------
 pub fn compile_lexers(language_lexer_arr: Vec<LanguageLexer>) -> LanguageLexersCompiled {
     let mut language_lexers_compiled = LanguageLexersCompiled {
         language_lexer_compiled_vec: Vec::new(),
@@ -634,7 +634,7 @@ pub fn compile_lexers(language_lexer_arr: Vec<LanguageLexer>) -> LanguageLexersC
 }
 
 /// Source lexer
-/// ----------------------------------------------------------------------------
+/// ------------
 ///
 /// This lexer categorizes source code into code blocks or doc blocks.
 ///
@@ -1441,7 +1441,7 @@ pub fn source_lexer(
 }
 
 // Tests
-// -----------------------------------------------------------------------------
+// -----
 //
 // Rust
 // [almost mandates](https://doc.rust-lang.org/book/ch11-03-test-organization.html)

@@ -16,7 +16,7 @@
 //
 // `tinymce-config.ts` -- integrate and configure the TinyMCE editor for use
 // with the CodeChat Editor
-// =============================================================================
+// =========================================================================
 //
 // Import TinyMCE.
 import {

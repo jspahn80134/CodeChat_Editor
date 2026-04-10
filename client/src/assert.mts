@@ -15,7 +15,7 @@
 // [http://www.gnu.org/licenses](http://www.gnu.org/licenses).
 //
 // `assert.mts`
-// =============================================================================
+// ============
 //
 // Provide a simple `assert` function to check conditions at runtime. Using
 // things like [assert](https://nodejs.org/api/assert.html) causes problems --

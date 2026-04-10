@@ -14,9 +14,9 @@
 // the CodeChat Editor. If not, see
 // [http://www.gnu.org/licenses](http://www.gnu.org/licenses).
 /// `filewatcher.rs` -- Implement the File Watcher "IDE"
-/// ============================================================================
+/// ====================================================
 // Imports
-// -----------------------------------------------------------------------------
+// -------
 //
 // ### Standard library
 use std::{
@@ -73,7 +73,7 @@ use crate::{
 };
 
 // Globals
-// -----------------------------------------------------------------------------
+// -------
 lazy_static! {
     /// Matches a bare drive letter. Only needed on Windows.
     static ref DRIVE_LETTER_REGEX: Regex = Regex::new("^[a-zA-Z]:$").unwrap();
@@ -82,7 +82,7 @@ lazy_static! {
 pub const FILEWATCHER_PATH_PREFIX: &[&str] = &["fw", "fsc"];
 
 /// File browser endpoints
-/// ----------------------------------------------------------------------------
+/// ----------------------
 ///
 /// The file browser provides a very crude interface, allowing a user to select
 /// a file from the local filesystem for editing. Long term, this should be
@@ -725,7 +725,7 @@ pub fn get_connection_id_raw(app_state: &WebAppState) -> u32 {
 }
 
 // Tests
-// -----------------------------------------------------------------------------
+// -----
 #[cfg(test)]
 mod tests {
     use std::{

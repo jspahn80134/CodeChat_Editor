@@ -1,5 +1,5 @@
 // `style_guide.cpp` - Literate programming using the CodeChat Editor
-// =============================================================================
+// ==================================================================
 //
 // This document, written as a C++ source file, primarily demonstrates the use
 // of the CodeChat Editor in literate programming. It should be viewed using the
@@ -22,7 +22,7 @@
 // [http://www.gnu.org/licenses](http://www.gnu.org/licenses).
 //
 // Introduction
-// -----------------------------------------------------------------------------
+// ------------
 //
 // This document provides a style guide for literate programming using the
 // CodeChat Editor. For basic use, see the [user manual](../README.md).
@@ -47,7 +47,7 @@ const char* CODE_BLOCK =
 // [brief overview of Markdown](https://commonmark.org/help/).
 //
 // Approach
-// -----------------------------------------------------------------------------
+// --------
 //
 // Viewing a program as a document defines the heart of the literate programming
 // paradigm. A program/document -- constructed as a series of code blocks and
@@ -74,7 +74,7 @@ const char* CODE_BLOCK =
 // person to review what you wrote, then implement their ideas and suggestions.
 //
 // <a id="organization"></a>Organization
-// -----------------------------------------------------------------------------
+// -------------------------------------
 //
 // The program should use headings to appropriately organize the contents. Near
 // the top of the file, include a single level-1 heading, providing the title of
@@ -91,7 +91,7 @@ const char* CODE_BLOCK =
 // style.
 //
 // Location
-// -----------------------------------------------------------------------------
+// --------
 //
 // In general, place documentation before the corresponding code. For example:
 //
@@ -111,7 +111,7 @@ class LedBlinker {
 };
 
 // Use of mathematics
-// -----------------------------------------------------------------------------
+// ------------------
 //
 // Formulas should be placed near code that implements them, along with good
 // explanations of the equations used. For example:
@@ -158,7 +158,7 @@ double accurate_g(
 }
 
 // Excellence in code
-// -----------------------------------------------------------------------------
+// ------------------
 //
 // Literate programming should be accompanied by excellence in authoring code.
 // Specifically:
@@ -178,7 +178,7 @@ double accurate_g(
 //   [test-driven development](https://en.wikipedia.org/wiki/Test-driven_development).
 //
 // Editor configuration
-// -----------------------------------------------------------------------------
+// --------------------
 //
 // Properly configuring the text editor used with the CodeChat Editor
 // significantly improves the authoring process. Recommended settings:
@@ -197,7 +197,7 @@ double accurate_g(
 // * On a big monitor, place your IDE side by side with the CodeChat Editor.
 //
 // Common problems
-// -----------------------------------------------------------------------------
+// ---------------
 //
 // * Don't drag and drop an image into the Editor – this creates a mess.
 //   Instead, save all images to a file, then use an SVG or PNG image for
@@ -230,13 +230,13 @@ double accurate_g(
 // C/C++.
 //
 // Example structure
-// -----------------------------------------------------------------------------
+// -----------------
 //
 // As discussed in [organization](#organization), the remainder of this document
 // presents the preferred use of headings to organize source code.
 //
 // <a id="org-style"></a>Includes
-// -----------------------------------------------------------------------------
+// ------------------------------
 //
 // Include files (in Python, imports; Rust, use statements; JavaScript,
 // require/import, etc.) should be organized by category; for example,
@@ -256,23 +256,23 @@ double accurate_g(
 #include <style_guide.hpp>
 
 // Global variables/constants
-// -----------------------------------------------------------------------------
+// --------------------------
 //
 // Use units when describing physical quantities. For example, this gives the
 // acceleration due to gravity in $m/s^2$.
 const double accel_m_s2 = 9.8067;
 
 // Macros
-// -----------------------------------------------------------------------------
+// ------
 #define LED1 (LATB16)
 
 // Structures/classes
-// -----------------------------------------------------------------------------
+// ------------------
 class BlinkLed {
 };
 
 // Code
-// -----------------------------------------------------------------------------
+// ----
 int main(int argc, char* argv[]) {
     // Here's an example of commenting code out when using the CodeChat Editor:
     /**

@@ -15,9 +15,9 @@
 /// [http://www.gnu.org/licenses](http://www.gnu.org/licenses).
 ///
 /// `test_utils.rs` -- Reusable routines for testing.
-/// ============================================================================
+/// =================================================
 // Imports
-// -----------------------------------------------------------------------------
+// -------
 //
 // ### Standard library
 use std::env;
@@ -33,7 +33,7 @@ use log::Level;
 use crate::testing_logger;
 
 // Macros
-// -----------------------------------------------------------------------------
+// ------
 //
 // Extract a known enum variant or fail. More concise than the alternative (`if
 // let`, or `let else`). From [SO](https://stackoverflow.com/a/69324393). The
@@ -97,7 +97,7 @@ macro_rules! prep_test_dir {
 }
 
 // Code
-// -----------------------------------------------------------------------------
+// ----
 //
 // Use the `tests/fixtures` path (relative to the root of this Rust project) to
 // store files for testing. A subdirectory tree, named by the module path then
