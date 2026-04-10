@@ -52,7 +52,7 @@ Implementation
     * [CodeChatEditor.mts](client/src/CodeChatEditor.mts)
       * [CodeMirror-integration.mts](client/src/CodeMirror-integration.mts)
       * [tinymce-config.mts](client/src/tinymce-config.mts)
-      * [graphviz-webcomponent-setup.mjs](client/src/graphviz-webcomponent-setup.mts)
+      * [graphviz-webcomponent-setup.mjs](client/src/graphviz-webcomponent-setup.mjs)
       * [Mermaid](client/src/third-party/wc-mermaid/developer.md)
       * [shared\_types.mts](client/src/shared_types.mts)
       * [assert.mts](client/src/assert.mts)
@@ -76,8 +76,8 @@ Implementation
     * [Developer documentation](extensions/VSCode/developer.md)
 * Development tools
   * Builder
-    * [builder/Cargo.toml](Cargo.toml)
-    * [builder/src/main.rs](main.rs)
+    * [builder/Cargo.toml](builder/Cargo.toml)
+    * [builder/src/main.rs](builder/src/main.rs)
   * Git
     * [server/.gitignore](server/.gitignore)
     * [client/static/.gitignore](client/static/.gitignore)
