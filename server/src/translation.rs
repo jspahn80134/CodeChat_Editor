@@ -344,6 +344,7 @@ pub fn create_translation_queues(
                 WebsocketQueues {
                     from_websocket_tx: from_ide_tx,
                     to_websocket_rx: to_ide_rx,
+                    pending_messages: HashMap::new(),
                 },
             )
             .is_none()
@@ -360,6 +361,7 @@ pub fn create_translation_queues(
                 WebsocketQueues {
                     from_websocket_tx: from_client_tx,
                     to_websocket_rx: to_client_rx,
+                    pending_messages: HashMap::new(),
                 },
             )
             .is_none()

@@ -34,6 +34,7 @@ use actix_web::{
     error::{Error, ErrorBadRequest},
     get, web,
 };
+use htmlize::escape_text;
 use indoc::formatdoc;
 use log::{debug, error};
 
@@ -46,8 +47,8 @@ use crate::{
     },
     webserver::{
         EditorMessage, EditorMessageContents, IdeType, RESERVED_MESSAGE_ID, ResultErrTypes,
-        ResultOkTypes, WebAppState, client_websocket, escape_html, filesystem_endpoint,
-        get_client_framework, get_server_url, html_wrapper, send_response,
+        ResultOkTypes, WebAppState, client_websocket, filesystem_endpoint, get_client_framework,
+        get_server_url, html_wrapper, send_response,
     },
 };
 
@@ -268,7 +269,7 @@ pub async fn vscode_client_framework(connection_id: web::Path<String>) -> HttpRe
             Ok(web_page) => web_page,
             Err(html_string) => {
                 error!("{html_string}");
-                html_wrapper(&escape_html(&html_string))
+                html_wrapper(&escape_text(&html_string))
             }
         },
     )

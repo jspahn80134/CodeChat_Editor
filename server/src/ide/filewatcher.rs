@@ -67,7 +67,7 @@ use crate::{
     translation::{create_translation_queues, translation_task},
     webserver::{
         EditorMessage, EditorMessageContents, RESERVED_MESSAGE_ID, UpdateMessageContents,
-        client_websocket, get_client_framework, html_not_found, html_wrapper, path_display,
+        client_websocket, get_client_framework, html_wrapper, http_not_found, path_display,
         send_response,
     },
 };
@@ -135,8 +135,8 @@ async fn filewatcher_browser_endpoint(
     let canon_path = match Path::new(&fixed_path).canonicalize() {
         Ok(p) => p,
         Err(err) => {
-            return Ok(html_not_found(&format!(
-                "<p>The requested path <code>{fixed_path}</code> is not valid: {err}.</p>"
+            return Ok(http_not_found(&format!(
+                "The requested path {fixed_path} is not valid: {err}."
             )));
         }
     };
@@ -150,8 +150,8 @@ async fn filewatcher_browser_endpoint(
 
     // It's not a directory or a file...we give up. For simplicity, don't handle
     // symbolic links.
-    Ok(html_not_found(&format!(
-        "<p>The requested path <code>{}</code> is not a directory or a file.</p>",
+    Ok(http_not_found(&format!(
+        "The requested path {} is not a directory or a file.",
         path_display(&canon_path)
     )))
 }
@@ -172,7 +172,7 @@ async fn dir_listing(web_path: &str, dir_path: &Path) -> HttpResponse {
         let mut drive_html = String::new();
         let logical_drives = match get_logical_drive() {
             Ok(v) => v,
-            Err(err) => return html_not_found(&format!("Unable to list drive letters: {err}.")),
+            Err(err) => return http_not_found(&format!("Unable to list drive letters: {err}.")),
         };
         for drive_letter in logical_drives {
             drive_html.push_str(&format!(
@@ -196,8 +196,8 @@ async fn dir_listing(web_path: &str, dir_path: &Path) -> HttpResponse {
     let mut unwrapped_read_dir = match fs::read_dir(dir_path).await {
         Ok(p) => p,
         Err(err) => {
-            return html_not_found(&format!(
-                "<p>Unable to list the directory {}: {err}/</p>",
+            return http_not_found(&format!(
+                "Unable to list the directory {}: {err}",
                 path_display(dir_path)
             ));
         }
@@ -213,8 +213,8 @@ async fn dir_listing(web_path: &str, dir_path: &Path) -> HttpResponse {
                     let file_type = match dir_entry.file_type().await {
                         Ok(x) => x,
                         Err(err) => {
-                            return html_not_found(&format!(
-                                "<p>Unable to determine the type of {}: {err}.",
+                            return http_not_found(&format!(
+                                "Unable to determine the type of {}: {err}.",
                                 path_display(&dir_entry.path()),
                             ));
                         }
@@ -230,7 +230,7 @@ async fn dir_listing(web_path: &str, dir_path: &Path) -> HttpResponse {
                 }
             }
             Err(err) => {
-                return html_not_found(&format!("<p>Unable to read file in directory: {err}."));
+                return http_not_found(&format!("Unable to read file in directory: {err}."));
             }
         };
     }
@@ -256,8 +256,8 @@ async fn dir_listing(web_path: &str, dir_path: &Path) -> HttpResponse {
         let dir_name = match dir.file_name().into_string() {
             Ok(v) => v,
             Err(err) => {
-                return html_not_found(&format!(
-                    "<p>Unable to decode directory name '{err:?}' as UTF-8."
+                return http_not_found(&format!(
+                    "Unable to decode directory name '{err:?}' as UTF-8."
                 ));
             }
         };
@@ -273,9 +273,7 @@ async fn dir_listing(web_path: &str, dir_path: &Path) -> HttpResponse {
         let file_name = match file.file_name().into_string() {
             Ok(v) => v,
             Err(err) => {
-                return html_not_found(
-                    &format!("<p>Unable to decode file name {err:?} as UTF-8.",),
-                );
+                return http_not_found(&format!("Unable to decode file name {err:?} as UTF-8.",));
             }
         };
         let encoded_file = urlencoding::encode(&file_name);
@@ -305,10 +303,13 @@ async fn dir_listing(web_path: &str, dir_path: &Path) -> HttpResponse {
         .body(html_wrapper(&body))
 }
 
-/// Calls the [GetLogicalDrives](https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getlogicaldrives) Windows API function
-/// and returns a `Vector` of drive letters.
+/// Calls the
+/// [GetLogicalDrives](https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getlogicaldrives)
+/// Windows API function and returns a `Vector` of drive letters.
 ///
-/// Copied almost verbatim from the [win_partitions crate](https://docs.rs/crate/win_partitions/0.3.0/source/src/win_api.rs#144) when compilation errors broke the crate.
+/// Copied almost verbatim from the
+/// [win\_partitions crate](https://docs.rs/crate/win_partitions/0.3.0/source/src/win_api.rs#144)
+/// when compilation errors broke the crate.
 #[cfg(target_os = "windows")]
 pub fn get_logical_drive() -> Result<Vec<char>, std::io::Error> {
     let bitmask = unsafe { GetLogicalDrives() };
