@@ -57,7 +57,7 @@
 /// * `timestamp` – RFC3339 timestamp (in UTC).
 /// * `data` – JSON payload with event-specific details.
 
-use std::io;
+use std::{io, thread};
 
 use chrono::{DateTime, Utc};
 use log::{debug, error, info, warn};
@@ -196,73 +196,75 @@ impl EventCapture {
 
         let (tx, mut rx) = mpsc::unbounded_channel::<WorkerMsg>();
 
-        // Spawn a background task that will connect to PostgreSQL and then
-        // process events. This task runs on the Tokio/Actix runtime once the
-        // system starts, so the caller does not need to be async.
-        tokio::spawn(async move {
-            info!("Capture: attempting to connect to PostgreSQL…");
+        // Create a dedicated runtime so capture can be started from sync code
+        // before the Actix/Tokio server runtime exists.
+        thread::Builder::new()
+            .name("codechat-capture".to_string())
+            .spawn(move || {
+                let runtime = tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(1)
+                    .enable_all()
+                    .build()
+                    .expect("Capture: failed to build Tokio runtime");
 
-            match tokio_postgres::connect(&conn_str, NoTls).await {
-                Ok((client, connection)) => {
-                    info!("Capture: successfully connected to PostgreSQL.");
+                runtime.block_on(async move {
+                    info!("Capture: attempting to connect to PostgreSQL…");
 
-                    // Drive the connection in its own task.
-                    tokio::spawn(async move {
-                        if let Err(err) = connection.await {
-                            error!("Capture PostgreSQL connection error: {err}");
+                    match tokio_postgres::connect(&conn_str, NoTls).await {
+                        Ok((client, connection)) => {
+                            info!("Capture: successfully connected to PostgreSQL.");
+
+                            // Drive the connection in its own task.
+                            tokio::spawn(async move {
+                                if let Err(err) = connection.await {
+                                    error!("Capture PostgreSQL connection error: {err}");
+                                }
+                            });
+
+                            // Main event loop: pull events off the channel and insert
+                            // them into the database.
+                            while let Some(event) = rx.recv().await {
+                                debug!(
+                                    "Capture: inserting event: type={}, user_id={}, assignment_id={:?}, group_id={:?}, file_path={:?}",
+                                    event.event_type,
+                                    event.user_id,
+                                    event.assignment_id,
+                                    event.group_id,
+                                    event.file_path
+                                );
+
+                                if let Err(err) = insert_event(&client, &event).await {
+                                    error!(
+                                        "Capture: FAILED to insert event (type={}, user_id={}): {err}",
+                                        event.event_type, event.user_id
+                                    );
+                                } else {
+                                    debug!("Capture: event insert successful.");
+                                }
+                            }
+
+                            info!("Capture: event channel closed; background worker exiting.");
                         }
-                    });
 
-                    // Main event loop: pull events off the channel and insert
-                    // them into the database.
-                    while let Some(event) = rx.recv().await {
-                        debug!(
-                            "Capture: inserting event: type={}, user_id={}, assignment_id={:?}, group_id={:?}, file_path={:?}",
-                            event.event_type,
-                            event.user_id,
-                            event.assignment_id,
-                            event.group_id,
-                            event.file_path
-                        );
-
-                        if let Err(err) = insert_event(&client, &event).await {
-                            error!(
-                                "Capture: FAILED to insert event (type={}, user_id={}): {err}",
-                                event.event_type, event.user_id
+                        Err(err) => {
+                            let ctx = format!(
+                                "Capture: FAILED to connect to PostgreSQL (host={}, dbname={}, user={})",
+                                config.host, config.dbname, config.user
                             );
-                        } else {
-                            debug!("Capture: event insert successful.");
+
+                            log_pg_connect_error(&ctx, &err);
+
+                            // Drain and drop any events so we don't hold the sender.
+                            warn!("Capture: draining pending events after failed DB connection.");
+                            while rx.recv().await.is_some() {}
+                            warn!("Capture: all pending events dropped due to connection failure.");
                         }
                     }
-
-                    info!("Capture: event channel closed; background worker exiting.");
-                }
-
-Err(err) => {
-    let ctx = format!(
-        "Capture: FAILED to connect to PostgreSQL (host={}, dbname={}, user={})",
-        config.host, config.dbname, config.user
-    );
-
-    log_pg_connect_error(&ctx, &err);
-
-    // Drain and drop any events so we don't hold the sender.
-    warn!("Capture: draining pending events after failed DB connection.");
-    while rx.recv().await.is_some() {}
-    warn!("Capture: all pending events dropped due to connection failure.");
-}
-
-                // Err(err) => { // NOTE: we *don't* pass `err` twice here;
-                // `{err}` in the format // string already grabs the local `err`
-                // binding. error!( "Capture: FAILED to connect to PostgreSQL
-                // (host={}, dbname={}, user={}): {err}", config.host,
-                // config.dbname, config.user, ); // Drain and drop any events
-                // so we don't hold the sender. warn!("Capture: draining pending
-                // events after failed DB connection."); while
-                // rx.recv().await.is\_some() {} warn!("Capture: all pending
-                // events dropped due to connection failure."); }
-            }
-        });
+                });
+            })
+            .map_err(|err| {
+                io::Error::other(format!("Capture: failed to start worker thread: {err}"))
+            })?;
 
         Ok(Self { tx })
     }
