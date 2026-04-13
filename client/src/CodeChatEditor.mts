@@ -15,7 +15,7 @@
 // [http://www.gnu.org/licenses](http://www.gnu.org/licenses).
 //
 // `CodeChatEditor.mts` -- the CodeChat Editor Client
-// =============================================================================
+// ==================================================
 //
 // The overall process of load a file is:
 //
@@ -39,12 +39,12 @@
 //    writes this code to the disk.
 //
 // Imports
-// -----------------------------------------------------------------------------
+// -------
 //
 // ### JavaScript/TypeScript
 //
 // #### Third-party
-import "./third-party/wc-mermaid/wc-mermaid";
+import "./third-party/wc-mermaid/wc-mermaid.js";
 
 // #### Local
 import { assert } from "./assert.mjs";
@@ -58,7 +58,7 @@ import {
     scroll_to_line as codemirror_scroll_to_line,
     set_CodeMirror_positions,
 } from "./CodeMirror-integration.mjs";
-import "./graphviz-webcomponent-setup.mts";
+import "./graphviz-webcomponent-setup.mjs";
 // This must be imported *after* the previous setup import, so it's placed here,
 // instead of in the third-party category above.
 import "./third-party/graphviz-webcomponent/graph.js";
@@ -78,7 +78,7 @@ import { show_toast } from "./show_toast.mjs";
 import "./css/CodeChatEditor.css";
 
 // Data structures
-// -----------------------------------------------------------------------------
+// ---------------
 //
 // <a id="EditorMode"></a>Define all possible editor modes; these are passed as
 // a [query string](https://en.wikipedia.org/wiki/Query_string)
@@ -119,7 +119,7 @@ declare global {
 }
 
 // Globals
-// -----------------------------------------------------------------------------
+// -------
 //
 // The ID of the autosave timer; when this timer expires, the document will be
 // autosaved.
@@ -145,7 +145,7 @@ export const set_is_dirty = (value: boolean = true) => {
 export const get_is_dirty = () => is_dirty;
 
 // Page initialization
-// -----------------------------------------------------------------------------
+// -------------------
 
 // This is copied from
 // [MDN](https://developer.mozilla.org/en-US/docs/Web/API/Document/DOMContentLoaded_event#checking_whether_loading_is_already_complete).
@@ -160,7 +160,7 @@ export const on_dom_content_loaded = (on_load_func: () => void) => {
 };
 
 // File handling
-// -----------------------------------------------------------------------------
+// -------------
 //
 // True if this is a CodeChat Editor document (not a source file).
 const is_doc_only = () => {
@@ -169,13 +169,13 @@ const is_doc_only = () => {
     return current_metadata?.["mode"] === "markdown";
 };
 
-// Wait for the DOM to load before opening the file.
 const open_lp = async (
     codechat_for_web: CodeChatForWeb,
     is_re_translation: boolean,
     cursor_line?: number,
     scroll_line?: number,
 ) =>
+    // Wait for the DOM to load before opening the file.
     await new Promise<void>((resolve) =>
         on_dom_content_loaded(async () => {
             await _open_lp(
@@ -216,10 +216,16 @@ const _open_lp = async (
     // render is finished.
     await window.MathJax.startup.promise;
 
-    // The only the `await` is based on TinyMCE init, which should only cause an
-    // async delay on its first execution. (Even then, I'm not sure it does,
-    // since all resources are statically imported). So, we should be OK for the
-    // rest of this function.
+    // Process any pending events before proceeding. Sometimes, TinyMCE has a
+    // pending edit that hasn't been processed yet, meaning the `is_dirty` flag
+    // is incorrect.
+    tinymce.activeEditor?.save();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // The only call to `await` is based on TinyMCE init, which should only
+    // cause an async delay on its first execution. (Even then, I'm not sure it
+    // does, since all resources are statically imported). So, we should be OK
+    // for the rest of this function.
     //
     // Now, make all decisions about `is_dirty`: if the text is dirty, do some
     // special processing; simply applying the update could cause either data
@@ -561,7 +567,7 @@ const clearAutosaveTimer = () => {
 };
 
 // Navigation
-// -----------------------------------------------------------------------------
+// ----------
 //
 // The TOC and this page calls this when a hyperlink is clicked. This saves the
 // current document before navigating.
@@ -704,7 +710,7 @@ on_dom_content_loaded(async () => {
 });
 
 // Testing
-// -----------------------------------------------------------------------------
+// -------
 //
 // A great and simple idea taken from
 // [SO](https://stackoverflow.com/a/54116079): wrap all testing exports in a

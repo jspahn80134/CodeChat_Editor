@@ -15,7 +15,7 @@
 // [http://www.gnu.org/licenses](http://www.gnu.org/licenses).
 //
 // `CodeChatEditorFramework.mts` -- the CodeChat Editor Client Framework
-// =============================================================================
+// =====================================================================
 //
 // This maintains a websocket connection between the CodeChat Editor Server. The
 // accompanying HTML is a full-screen iframe, allowing the Framework to change
@@ -24,7 +24,7 @@
 // location changes.
 //
 // Imports
-// -----------------------------------------------------------------------------
+// -------
 //
 // ### Third-party
 import ReconnectingWebSocket from "./third-party/ReconnectingWebSocket.cjs";
@@ -49,7 +49,7 @@ import {
 import { ResultErrTypes } from "./rust-types/ResultErrTypes.js";
 
 // Websocket
-// -----------------------------------------------------------------------------
+// ---------
 //
 // This code communicates with the CodeChat Editor Server via its websocket
 // interface.
@@ -167,7 +167,7 @@ class WebSocketComm {
                         if (contents !== undefined) {
                             // Check and update the version. If this is a diff,
                             // ensure the diff was made against the version of
-                            // the file we have. Ignore re-translation version errors, instead ignoring the update.
+                            // the file we have.
                             if ("Diff" in contents.source) {
                                 if (
                                     contents.source.Diff.version !==

@@ -1,0 +1,9 @@
+{
+  "host": "3.146.138.182",
+  "port": 5432,
+  "dbname": "CodeChatCaptureDB",
+  "user": "CodeChatCaptureUser",
+  "password": "OB3yc8Hk9SuVjzXMdUDr0C7w4PqLQisn",
+  "max_connections": 5,
+  "timeout_seconds": 30
+}

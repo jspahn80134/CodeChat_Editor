@@ -17,15 +17,30 @@ CodeChat Editor. If not, see
 [http://www.gnu.org/licenses/](http://www.gnu.org/licenses/).
 
 Changelog
-================================================================================
+=========
 
 [Github master](https://github.com/bjones1/CodeChat_Editor)
---------------------------------------------------------------------------------
+-----------------------------------------------------------
 
 * No changes.
 
-Version 0.1.50 -- 2025-Feb-05
---------------------------------------------------------------------------------
+Version 0.1.52 -- 2026-Apr-09
+-----------------------------
+
+* Fix losing last typed character when receiving a translation while a TinyMCE
+  edit is pending.
+* Avoid unnecessary and distracting scrolling to the top of a doc block when
+  focusing the doc block.
+* When first switching to a file, restore the cursor position from VSCode.
+
+Version 0.1.51 -- 2026-Feb-18
+-----------------------------
+
+* Revert back to working version of CodeMirror.
+* Updates to other libraries.
+
+Version 0.1.50 -- 2026-Feb-05
+-----------------------------
 
 * First and second-level heading underlines are now sized based on the heading's
   length, rather than fixed at 80 characters.
@@ -35,7 +50,7 @@ Version 0.1.50 -- 2025-Feb-05
 * Replace old `win_partitions` crate which no longer builds.
 
 Version 0.1.49 -- 2025-Dec-29
---------------------------------------------------------------------------------
+-----------------------------
 
 * Added instructional videos to manual.
 * Improve accessibility by using content sectioning tags.
@@ -45,7 +60,7 @@ Version 0.1.49 -- 2025-Dec-29
   form after a re-translation in the Client.
 
 Version 0.1.48 -- 2025-Dec-22
---------------------------------------------------------------------------------
+-----------------------------
 
 * Re-translate Markdown documents as necessary. This causes math written in the
   Client to immediately be rendered, instead of needing to switch to the IDE and
@@ -57,7 +72,7 @@ Version 0.1.48 -- 2025-Dec-22
   the Client edits didn't update IDE text.
 
 Version 0.1.47 -- 2025-Dec-19
---------------------------------------------------------------------------------
+-----------------------------
 
 * Fix errors in Client when editing a file with adjacent doc blocks.
 * Fix out of sync errors when the table of contents file is open.
@@ -73,14 +88,14 @@ Version 0.1.47 -- 2025-Dec-19
   [Loci](https://www.simcenter.msstate.edu/software/luke/loci/index.html) files.
 
 Version 0.1.46 -- 2025-Dec-15
---------------------------------------------------------------------------------
+-----------------------------
 
 * Avoid spaces disappearing in Client when editing lists.
 * Improve speed of convert
 * Improve Client error reporting.
 
 Version 0.1.45 -- 2025-Dec-11
---------------------------------------------------------------------------------
+-----------------------------
 
 * Fix loss of editing in the Client when in document-only mode.
 * Fix data corruption in the Client when in document-only mode and edits are
@@ -90,7 +105,7 @@ Version 0.1.45 -- 2025-Dec-11
 * Correctly translate table cells containing blocks from HTML to Markdown.
 
 Version 0.1.44 -- 2025-Dec-09
---------------------------------------------------------------------------------
+-----------------------------
 
 * Update Graphviz to latest build; make Graphviz output a block element, not an
   inline element.
@@ -103,13 +118,13 @@ Version 0.1.44 -- 2025-Dec-09
 * Correct incorrect whitespace removal in Graphviz and Mermaid diagrams.
 
 Version 0.1.43 -- 2025-Dec-05
---------------------------------------------------------------------------------
+-----------------------------
 
 * Fix cursor movement errors in the Client.
 * Prevent unnecessary saves of Client data to the IDE.
 
 Version 0.1.42 -- 2025-Dec-04
---------------------------------------------------------------------------------
+-----------------------------
 
 * Drag and drop of images creates a mess; disable drop and drop for this reason.
 * Send sync data when doc blocks receive focus.
@@ -124,7 +139,7 @@ Version 0.1.42 -- 2025-Dec-04
 * Increase time errors messages are displayed in the Client.
 
 Version 0.1.41 -- 2025-Nov-17
---------------------------------------------------------------------------------
+-----------------------------
 
 * Math now renders in the active doc block, as shown below.
 * Math is now protected from accidental edits in the Client:
@@ -135,7 +150,7 @@ Version 0.1.41 -- 2025-Nov-17
 * Remove unnecessary TinyMCE plugins.
 
 Version 0.1.40 -- 2025-Nov-11
---------------------------------------------------------------------------------
+-----------------------------
 
 * File watcher now accepts new files from the Client.
 * Improved translation from HTML to Markdown.
@@ -143,7 +158,7 @@ Version 0.1.40 -- 2025-Nov-11
 * Add CodeMirror support for SQL and YAML.
 
 Version 0.1.39 -- 2025-Oct-23
---------------------------------------------------------------------------------
+-----------------------------
 
 * Scroll viewport to center on cursor movement.
 * Significant improvements to test framework.
@@ -151,7 +166,7 @@ Version 0.1.39 -- 2025-Oct-23
 * Refactor IDE interface back into the Server.
 
 Version 0.1.38 -- 2025-Sep-24
---------------------------------------------------------------------------------
+-----------------------------
 
 * Automatically find a free port for the Client, instead of requiring the user
   to specify it in the VSCode settings.
@@ -162,14 +177,14 @@ Version 0.1.38 -- 2025-Sep-24
 * Improved build process.
 
 Version 0.1.37 -- 2025-Sep-22
---------------------------------------------------------------------------------
+-----------------------------
 
 * Fix: avoid loading the same file twice in a row when the user clicks on a link
   in the Client.
 * Improve VSCode connection with the Server.
 
 Version 0.1.36 -- 2025-Sep-17
---------------------------------------------------------------------------------
+-----------------------------
 
 * The system continues to work after a PC goes to sleep then wakes back up;
   communication within previous versions fails after a sleep/wake up cycle.
@@ -181,21 +196,21 @@ Version 0.1.36 -- 2025-Sep-17
 * Remove the File entry from the HTML editor's main menu.
 
 Version 0.1.35 -- 2025-Sep-12
---------------------------------------------------------------------------------
+-----------------------------
 
 * Embed the CodeChat Editor Server inside the VSCode extension, rather than
   running it as a standalone binary.
 * Fixes to the build process.
 
 Version 0.1.34 -- 2025-Sep-08
---------------------------------------------------------------------------------
+-----------------------------
 
 * Make the Client text editable again. Improve handling of selections.
 * In VSCode, load a new file in the Client after a short delay, rather than
   immediately. This provides a more efficient process when changing files.
 
 Version 0.1.33 -- 2025-Sep-02
---------------------------------------------------------------------------------
+-----------------------------
 
 * Change `<graphviz-graph>` syntax, which now correctly translates from the
   Client to source code, avoiding data loss in previous versions.
@@ -205,18 +220,18 @@ Version 0.1.33 -- 2025-Sep-02
 * Correct a data loss bug when deleting multiple sequential doc blocks.
 
 Version 0.1.32 -- 2025-Sep-01
---------------------------------------------------------------------------------
+-----------------------------
 
 * Improve tooling for VSCode extension.
 * Improve selection handling in the Client.
 
 Version 0.1.31 -- 2025-Aug-31
---------------------------------------------------------------------------------
+-----------------------------
 
 * Correct EOL handling on Windows which caused data corruption.
 
 Version 0.1.30 -- 2025-Aug-30
---------------------------------------------------------------------------------
+-----------------------------
 
 * Correct ordering of messages sent to and from the Framework to the Client.
 * Fix and improve test framework and error reporting.
@@ -224,27 +239,27 @@ Version 0.1.30 -- 2025-Aug-30
 * Update PDF viewer.
 
 Version 0.1.29 -- 2025-Aug-23
---------------------------------------------------------------------------------
+-----------------------------
 
 * Fix bugs in PDF viewer.
 * Fix error when scrolling before a document is loaded.
 * Fix debug print statements.
 
 Version 0.1.28 -- 2025-Aug-13
---------------------------------------------------------------------------------
+-----------------------------
 
 * Fix navigation in document-only mode.
 * Improve errors reporting in the VSCode extension.
 
 Version 0.1.27 -- 2025-Aug-05
---------------------------------------------------------------------------------
+-----------------------------
 
 * Correctly handle document-only files.
 * Update to the MathJax 4.0.0 release.
 * Improve release process -- include release notes taken from the changelog.
 
 Earlier releases
---------------------------------------------------------------------------------
+----------------
 
 * v0.1.26, 2025-Jul-31:
   * Additional data corruption fixes when applying edits.

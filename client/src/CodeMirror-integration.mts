@@ -648,6 +648,7 @@ const on_dirty = (
     });
 };
 
+// Handle cursur movement and mouse selection in a doc block.
 export const DocBlockPlugin = ViewPlugin.fromClass(
     class {
         constructor(_view: EditorView) {}
@@ -655,7 +656,7 @@ export const DocBlockPlugin = ViewPlugin.fromClass(
             // If the editor doesn't have focus, ignore selection changes. This
             // avoid the case where cursor movement in the IDE produces
             // selection changes in the Client, which then steals focus. TODO:
-            // with the editor isn't focused, highlight the relevant line or
+            // when the editor isn't focused, highlight the relevant line or
             // something similar.
             if (update.selectionSet && update.view.hasFocus) {
                 // See if the new main selection falls within a doc block.
@@ -690,7 +691,7 @@ export const DocBlockPlugin = ViewPlugin.fromClass(
                                 return;
                             }
 
-                            // TODO: current, posToDom never gives us a doc
+                            // TODO: currently, posToDom never gives us a doc
                             // block, even when the from/to is correct. So, we
                             // never get here.
                             (dom.childNodes[1] as HTMLElement).focus();
@@ -811,7 +812,10 @@ export const DocBlockPlugin = ViewPlugin.fromClass(
                         // This process causes TinyMCE to lose focus. Restore
                         // that. However, this causes TinyMCE to lose the
                         // selection, which the next bit of code then restores.
-                        tinymce.activeEditor!.focus(false);
+                        // When the doc block is longer than a screen, omitting
+                        // the `preventScroll` parameter causes this to scroll
+                        // to the top of the doc block, which is incorrect.
+                        tinymce_div.focus({ preventScroll: true });
 
                         // Copy the selection over to TinyMCE by indexing the
                         // selection path to find the selected node.
