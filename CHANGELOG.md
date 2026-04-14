@@ -22,6 +22,11 @@ Changelog
 [Github master](https://github.com/bjones1/CodeChat_Editor)
 -----------------------------------------------------------
 
+*  No changes.
+
+Version 0.1.53 -- 2026-Apr-14
+-----------------------------
+
 * Claude code reviews revealed the following issues, which were fixed manually:
   * Fix multi-byte Unicode encoding bug.
   * Fix incorrect websocket shutdown sequence.
