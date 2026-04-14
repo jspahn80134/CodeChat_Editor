@@ -77,7 +77,7 @@ pub async fn vscode_ide_websocket(
             }
             CreateTranslationQueuesError::IdeInUse(connection_id_str) => {
                 return client_websocket(
-                    connection_id_str.clone(),
+                    connection_id_str,
                     req,
                     body,
                     app_state.ide_queues.clone(),
@@ -126,10 +126,9 @@ pub fn vscode_ide_core(
 
             // Make sure it's the `Opened` message.
             let EditorMessageContents::Opened(ide_type) = first_message.message else {
-                let id = first_message.id;
                 let err = ResultErrTypes::UnexpectedMessage(format!("{:#?}", first_message));
                 error!("{err}");
-                send_response(&to_ide_tx, id, Err(err)).await;
+                send_response(&to_ide_tx, first_message.id, Err(err)).await;
 
                 // Send a `Closed` message to shut down the websocket.
                 queue_send!(to_ide_tx.send(EditorMessage { id: RESERVED_MESSAGE_ID, message: EditorMessageContents::Closed}), 'task);
@@ -156,8 +155,8 @@ pub fn vscode_ide_core(
                             first_message.id
                         );
                         send_response(&to_ide_tx, first_message.id, Ok(ResultOkTypes::Void)).await;
-
-                        // Send the HTML for the internal browser.
+                        // Send the HTML for the internal browser. The ID of
+                        // this message is `RESERVED_MESSAGE_ID`.
                         let client_html = formatdoc!(
                             r#"
                             <!DOCTYPE html>
@@ -195,7 +194,7 @@ pub fn vscode_ide_core(
                                                 Ok(())
                                             } else {
                                                 Err(format!(
-                                                    "Unexpected message LoadFile contents {result_ok:?}."
+                                                    "Unexpected Result message with LoadFile contents {result_ok:?}."
                                                 ))
                                             }
                                     },
@@ -204,7 +203,8 @@ pub fn vscode_ide_core(
                             };
                         if let Err(err) = res {
                             error!("{err}");
-                            // Send a `Closed` message.
+                            // Send a `Closed` message using the next available
+                            // ID (`RESERVED_MESSAGE_ID + 1`).
                             queue_send!(to_ide_tx.send(EditorMessage {
                                 id: RESERVED_MESSAGE_ID + 1.0,
                                 message: EditorMessageContents::Closed
@@ -220,7 +220,9 @@ pub fn vscode_ide_core(
                             error!("{err:?}");
                             send_response(&to_ide_tx, first_message.id, Err(err)).await;
 
-                            // Send a `Closed` message.
+                            // Send a `Closed` message; use an ID of
+                            // `RESERVED_MESSAGE_ID`, since this is the first
+                            // message from the IDE.
                             queue_send!(to_ide_tx.send(EditorMessage{
                                 id: RESERVED_MESSAGE_ID,
                                 message: EditorMessageContents::Closed
@@ -237,7 +239,8 @@ pub fn vscode_ide_core(
                     error!("{err:?}");
                     send_response(&to_ide_tx, first_message.id, Err(err)).await;
 
-                    // Close the connection.
+                    // Close the connection, again using the first available ID
+                    // of `RESERVED_MESSAGE_ID`.
                     queue_send!(to_ide_tx.send(EditorMessage { id: RESERVED_MESSAGE_ID, message: EditorMessageContents::Closed}), 'task);
                     break 'task;
                 }

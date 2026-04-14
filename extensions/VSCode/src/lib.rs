@@ -89,7 +89,8 @@ impl CodeChatEditorServer {
     pub async fn send_message_update_plain(
         &self,
         file_path: String,
-        // `null` to send no source code; a string to send the source code.
+        // `null` to send no source code; a `(string, version)` to send the
+        // source code.
         option_contents: Option<(String, f64)>,
         cursor_position: Option<u32>,
         scroll_position: Option<f64>,

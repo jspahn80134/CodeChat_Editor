@@ -26,7 +26,7 @@
 //
 // ### Third-party
 //
-// None.
+// None. Though note that each parser module has local third-party imports.
 //
 // ### Local
 //
@@ -36,8 +36,8 @@
 ///
 /// This macro generates a parser function that converts the provided string
 /// into a series of code and doc blocks. I'd prefer to use traits, but don't
-/// see a way to pass the `Rule` types as a usable. (Using `RuleType` means we
-/// can't access `Rule::file`, etc.)
+/// see a way to pass the `Rule` types as a parameter. (Using `RuleType` means
+/// we can't access `Rule::file`, etc.)
 #[macro_export]
 macro_rules! make_parse_to_code_doc_blocks {
     ($parser: ty) => {
@@ -48,7 +48,7 @@ macro_rules! make_parse_to_code_doc_blocks {
             // CodeMirror indexes work.
             let normalized_input =
                 &String::from_iter(normalize_line_endings::normalized(input.chars()));
-            let pairs = match <$parser>::parse(Rule::file, normalized_input) {
+            let mut pairs = match <$parser>::parse(Rule::file, normalized_input) {
                 Ok(pairs) => pairs,
                 Err(e) => panic!("Parse error: {e:#?}"),
             }
@@ -63,10 +63,8 @@ macro_rules! make_parse_to_code_doc_blocks {
             assert_eq!(pairs.clone().last().unwrap().as_rule(), Rule::EOI);
             // Transform these tokens into code and doc blocks; ignore the last
             // token (EOI).
+            pairs.next_back();
             pairs
-                .rev()
-                .skip(1)
-                .rev()
                 .map(|block| match block.as_rule() {
                     Rule::inline_comment => {
                         // Gather all tokens in the inline comment.
@@ -76,15 +74,14 @@ macro_rules! make_parse_to_code_doc_blocks {
                         let whitespace = whitespace_pair.as_str();
                         let inline_comment_delim = inline_comment.next().unwrap();
                         // Combine the text of all the inline comments.
-                        let comment = &mut inline_comment.fold(
-                            String::new(),
-                            |mut acc, inline_comment_body| {
+                        let comment =
+                            &inline_comment.fold(String::new(), |mut acc, inline_comment_body| {
                                 assert_eq!(
                                     inline_comment_body.as_rule(),
                                     Rule::inline_comment_line
                                 );
                                 let s = inline_comment_body.as_str();
-                                let inner = &mut inline_comment_body.into_inner();
+                                let mut inner = inline_comment_body.into_inner();
                                 // See the notes on inline comments in
                                 // [c.pest](pest/c.pest) for the expected
                                 // structure of the `inline_comment_body`.
@@ -103,8 +100,7 @@ macro_rules! make_parse_to_code_doc_blocks {
                                 // comment contents) to the accumulator.
                                 acc.push_str(contents);
                                 acc
-                            },
-                        );
+                            });
 
                         // Determine which opening delimiter was used.
                         let _delimiter_index = match inline_comment_delim.as_rule() {
@@ -130,7 +126,7 @@ macro_rules! make_parse_to_code_doc_blocks {
                         let pre_whitespace_pair = block_comment.next().unwrap();
                         assert_eq!(pre_whitespace_pair.as_rule(), Rule::white_space);
                         let pre_whitespace = pre_whitespace_pair.as_str();
-                        let block_comment_opening_delim = block_comment.next().unwrap().as_rule();
+                        let block_comment_opening_delim = block_comment.next().unwrap();
                         let block_comment_pre_pair = block_comment.next().unwrap();
                         assert_eq!(block_comment_pre_pair.as_rule(), Rule::block_comment_pre);
                         let block_comment_pre = block_comment_pre_pair.as_str();
@@ -167,13 +163,6 @@ macro_rules! make_parse_to_code_doc_blocks {
                         let block_comment_ending = block_comment_ending_pair.as_str();
                         assert!(block_comment.next().is_none());
 
-                        // Determine which opening delimiter was used.
-                        let _opening_delim_index = match block_comment_opening_delim {
-                            Rule::block_comment_opening_delim_0 => 0,
-                            Rule::block_comment_opening_delim_1 => 1,
-                            Rule::block_comment_opening_delim_2 => 2,
-                            _ => unreachable!(),
-                        };
                         // TODO -- use this in the future.
                         //println!("Opening delimiter index: {}", opening_delim_index);
 
@@ -197,7 +186,9 @@ macro_rules! make_parse_to_code_doc_blocks {
                         let mut full_comment = parse_block_comment(&pre_whitespace, &full_comment);
                         // Trim the optional space, if it exists.
                         if !optional_space.is_empty() && full_comment.ends_with(optional_space) {
-                            full_comment.pop();
+                            // Don't `pop()`, in case the space is a multi-byte
+                            // character is some bizarre grammar.
+                            full_comment.truncate(full_comment.len() - optional_space.len());
                         }
 
                         // Transform this to a doc block.
@@ -205,7 +196,7 @@ macro_rules! make_parse_to_code_doc_blocks {
                         let lines = full_comment.lines().count();
                         $crate::lexer::CodeDocBlock::DocBlock($crate::lexer::DocBlock {
                             indent: pre_whitespace.to_string(),
-                            delimiter: "/*".to_string(),
+                            delimiter: block_comment_opening_delim.to_string(),
                             contents: full_comment.to_string(),
                             lines,
                         })

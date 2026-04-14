@@ -456,7 +456,7 @@ pub fn codechat_for_web_to_source(
         .map_err(CodechatForWebToSourceError::CannotTranslateCodeChat)
 }
 
-/// Return the byte index of `s[u16_16_index]`, where the indexing operation is
+/// Return the byte index of `s[utf_16_index]`, where the indexing operation is
 /// in UTF-16 code units.
 fn byte_index_of(s: &str, utf_16_index: usize) -> usize {
     let mut byte_index = 0;
@@ -648,7 +648,7 @@ pub enum CodeDocBlockVecToSourceError {
 
 // Turn this vec of CodeDocBlocks into a string of source code.
 fn code_doc_block_vec_to_source(
-    code_doc_block_vec: &Vec<CodeDocBlock>,
+    code_doc_block_vec: &[CodeDocBlock],
     lexer: &LanguageLexerCompiled,
 ) -> Result<String, CodeDocBlockVecToSourceError> {
     let mut file_contents = String::new();
@@ -884,7 +884,7 @@ pub fn source_to_codechat_for_web(
             // Walk through the code/doc blocks, ...
             let doc_contents = code_doc_block_arr
                 .iter()
-                // ...selcting only the doc block contents...
+                // ...selecting only the doc block contents...
                 .filter_map(|cdb| {
                     if let CodeDocBlock::DocBlock(db) = cdb {
                         Some(db.contents.as_str())
@@ -910,21 +910,21 @@ pub fn source_to_codechat_for_web(
             // 3. Hydrate the cleaned HTML.
             let html = hydrate_html(&html)
                 .map_err(|e| SourceToCodeChatForWebError::ParseFailed(e.to_string()))?;
-            // 3. Split on the separator.
+            // 4. Split on the separator.
             let mut doc_block_contents_iter = html.split(DOC_BLOCK_SEPARATOR_SPLIT_STRING);
             // <a class="fence-mending-end"></a>
 
             // Translate each `CodeDocBlock` to its `CodeMirror` equivalent.
+            let mut len = len_utf16(&code_mirror.doc);
             for code_or_doc_block in code_doc_block_arr {
                 let source = &mut code_mirror.doc;
                 match code_or_doc_block {
-                    CodeDocBlock::CodeBlock(code_string) => source.push_str(&code_string),
+                    CodeDocBlock::CodeBlock(code_string) => {
+                        source.push_str(&code_string);
+                        len += len_utf16(&code_string)
+                    }
                     CodeDocBlock::DocBlock(doc_block) => {
                         // Create the doc block.
-                        //
-                        // Get the length of the string in characters (not
-                        // bytes, which is what `len()` returns).
-                        let len = source.chars().count();
                         code_mirror.doc_blocks.push(CodeMirrorDocBlock {
                             from: len,
                             // To. Note that the last doc block could be zero
@@ -940,6 +940,7 @@ pub fn source_to_codechat_for_web(
                         // replace these in the editor. This keeps the line
                         // numbering of non-doc blocks correct.
                         source.push_str(&"\n".repeat(doc_block.lines));
+                        len += doc_block.lines;
                     }
                 }
             }
@@ -948,6 +949,11 @@ pub fn source_to_codechat_for_web(
     };
 
     Ok(TranslationResults::CodeChat(codechat_for_web))
+}
+
+// Compute the length of the provided string in UTF16 characters.
+fn len_utf16(s: &str) -> usize {
+    s.chars().map(|c| c.len_utf16()).sum()
 }
 
 // Like `source_to_codechat_for_web`, translate a source file to the CodeChat
@@ -1304,7 +1310,7 @@ static CUSTOM_ELEMENT_TO_CODE_BLOCK_LANGUAGE: phf::Map<&'static str, &'static st
 // this approach is to modify only what changed, rather than changing
 // everything. As a secondary goal, this hopefully improves overall performance
 // by sending less data between the server and the client, in spite of the
-// additional computational requirements for compting the diff.
+// additional computational requirements for computing the diff.
 //
 // Fundamentally, diffs of a string and diff of this vector require different
 // approaches:
@@ -1480,7 +1486,7 @@ pub fn diff_code_mirror_doc_blocks(
                             &prev_after_range_start_val.delimiter,
                         ),
                         contents: diff_str(
-                            &prev_after_range_start_val.contents,
+                            &prev_before_range_start_val.contents,
                             &prev_after_range_start_val.contents,
                         ),
                     },
@@ -1587,15 +1593,10 @@ pub fn diff_code_mirror_doc_blocks(
     let mut immediate_sequence_start_index: Option<usize> = None;
     for index in 0..change_specs.len() {
         let is_add = matches!(&change_specs[index], CodeMirrorDocBlockTransaction::Add(_));
-        let is_inserted_update = if let CodeMirrorDocBlockTransaction::Update(update) =
-            &change_specs[index]
-            && let Some(from_new) = update.from_new
-            && from_new > update.from
-        {
-            true
-        } else {
-            false
-        };
+        let is_inserted_update = matches!(
+            &change_specs[index],
+            CodeMirrorDocBlockTransaction::Update(u) if u.from_new.is_some_and(|f| f > u.from)
+        );
         if is_add || is_inserted_update {
             // This is an update produced by inserting lines.
             if immediate_sequence_start_index.is_none() {

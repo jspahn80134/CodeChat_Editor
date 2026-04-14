@@ -67,7 +67,7 @@ block_comment_closing_delim_2 =  { unused }
 //    [hard line break](https://spec.commonmark.org/0.31.2/#hard-line-breaks) in
 //    Markdown, which means inserting a hard line break this way in an inline
 //    comment requires the next line to omit the inline comment delimiters. For
-//    example: 
+//    example:
 //
 //    ```C
 //    // This is a hard line break\

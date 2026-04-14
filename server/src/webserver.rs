@@ -508,9 +508,7 @@ lazy_static! {
             |err| panic!("Error: Unable to read {:#?}: {err}", hl.to_string_lossy())
         );
         let hmm: HashMap<String, String> =
-            serde_json::from_str(&json).expect(
-                &format!("Unable to parse JSON in {:#?}", hl.to_string_lossy())
-            );
+            serde_json::from_str(&json).unwrap_or_else(|_| panic!("Unable to parse JSON in {:#?}", hl.to_string_lossy()));
         hmm
     };
 
@@ -966,7 +964,7 @@ pub async fn file_to_response(
                             <meta name="viewport" content="width=device-width, initial-scale=1">
                             <title>{name} - The CodeChat Editor</title>
                             {MATHJAX_TAGS}
-                            <link rel="stylesheet" href="/{codehat_editor_css}">
+                            <link rel="stylesheet" href="/{codechat_editor_css}">
                         </head>
                         <body class="CodeChat-theme-light">
                             <div class="CodeChat-TOC">
@@ -1010,7 +1008,7 @@ pub async fn file_to_response(
                     <title>{name} - The CodeChat Editor</title>
                     {MATHJAX_TAGS}
                     <script type="module">import "/{codechat_editor_js}"</script>
-                    <link rel="stylesheet" href="/{codehat_editor_css}">
+                    <link rel="stylesheet" href="/{codechat_editor_css}">
                     {sidebar_css}
                 </head>
                 <body class="CodeChat-theme-light">

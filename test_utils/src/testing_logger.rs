@@ -42,7 +42,7 @@
 //! Log events are captured in a thread\_local variable so this module behaves
 //! correctly when tests are run multithreaded.
 //!
-//! All log levels are captured, but none are sent to any logging system. The
+//! All debug and higher log levels are captured, but none are sent to any logging system. The
 //! test developer should use the `validate()` function in order to check the
 //! captured log messages.
 //!
@@ -114,15 +114,14 @@ thread_local!(static LOG_RECORDS: RefCell<Vec<CapturedLog>> = RefCell::new(Vec::
 struct TestingLogger {}
 
 impl Log for TestingLogger {
-    #[allow(unused_variables)]
-    fn enabled(&self, metadata: &Metadata) -> bool {
+    fn enabled(&self, _metadata: &Metadata) -> bool {
         true // capture all log levels
     }
 
     fn log(&self, record: &Record) {
         LOG_RECORDS.with(|records| {
             let captured_record = CapturedLog {
-                body: format!("{}", record.args()),
+                body: record.args().to_string(),
                 level: record.level(),
                 target: record.target().to_string(),
             };
@@ -151,7 +150,7 @@ pub fn setup() {
             .unwrap();
     });
     LOG_RECORDS.with(|records| {
-        records.borrow_mut().truncate(0);
+        records.borrow_mut().clear();
     });
 }
 
@@ -161,10 +160,10 @@ pub fn setup() {
 /// captured log events. As a side effect, the records are cleared.
 pub fn validate<F>(asserter: F)
 where
-    F: Fn(&Vec<CapturedLog>),
+    F: Fn(&[CapturedLog]),
 {
     LOG_RECORDS.with(|records| {
         asserter(&records.borrow());
-        records.borrow_mut().truncate(0);
+        records.borrow_mut().clear();
     });
 }

@@ -64,7 +64,7 @@ use crate::{
 };
 use test_utils::{
     cast,
-    test_utils::{_prep_test_dir, check_logger_errors, configure_testing_logger},
+    test_utils::{check_logger_errors, configure_testing_logger, prep_test_dir_impl},
 };
 
 // Globals
@@ -197,7 +197,7 @@ async fn _prep_test(
     test_full_name: &str,
 ) -> (TempDir, PathBuf, WebSocketStreamTcp, WebSocketStreamTcp) {
     configure_testing_logger();
-    let (temp_dir, test_dir) = _prep_test_dir(test_full_name);
+    let (temp_dir, test_dir) = prep_test_dir_impl(test_full_name);
     // Ensure the webserver is running.
     let _ = &*WEBSERVER_HANDLE;
     let now = SystemTime::now();

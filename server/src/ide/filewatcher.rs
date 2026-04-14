@@ -319,7 +319,8 @@ pub fn get_logical_drive() -> Result<Vec<char>, std::io::Error> {
         let mut mask = 1;
         let mut result: Vec<char> = vec![];
 
-        for index in 1..26 {
+        // Recall that the range 1..27 ends a 26, covering all drive letters.
+        for index in 1..27 {
             if mask & bitmask == mask {
                 let char = std::char::from_u32(index + 64);
                 result.push(char.unwrap());
@@ -400,7 +401,7 @@ async fn processing_task(
         match app_state.ide_queues.lock().unwrap().remove(&connection_id) {
             Some(queues) => (queues.from_websocket_tx.clone(), queues.to_websocket_rx),
             None => {
-                let err = "No websocket queues for connection id {connection_id}.";
+                let err = format!("No websocket queues for connection id {connection_id}.");
                 error!("{err}");
                 return Err(error::ErrorBadRequest(err));
             }
@@ -589,11 +590,12 @@ async fn processing_task(
                             let result = 'process: {
                                 // Check that the file path matches the current
                                 // file. If `canonicalize` fails, then the files
-                                // don't match.
+                                // don't match. Note that `file_path` is already
+                                // canonicalized.
                                 if Some(Path::new(&update_message_contents.file_path).to_path_buf()) != current_filepath {
                                     break 'process Err(ResultErrTypes::WrongFileUpdate(update_message_contents.file_path, current_filepath.clone()));
                                 }
-                                // With code or a path, there's nothing to save.
+                                // Without code, there's nothing to save.
                                 let codechat_for_web = match update_message_contents.contents {
                                     None => break 'process Ok(ResultOkTypes::Void),
                                     Some(cfw) => cfw,
@@ -633,7 +635,8 @@ async fn processing_task(
                                 {
                                     break 'err_exit Err(ResultErrTypes::FileUnwatchError(cfp.to_path_buf(), err.to_string()));
                                 }
-                                // Update to the new path.
+                                // Update to the new path, which is already
+                                // canonicalized.
                                 current_filepath = Some(file_path.to_path_buf());
 
                                 // Watch the new file.
@@ -663,7 +666,7 @@ async fn processing_task(
 
                         EditorMessageContents::LoadFile(..)  => {
                             // We never have the requested file loaded in this
-                            // "IDE". Intead, it's always on disk.
+                            // "IDE". Instead, it's always on disk.
                             send_response(&from_ide_tx, m.id, Ok(ResultOkTypes::LoadFile(None))).await;
                         }
 
@@ -992,7 +995,10 @@ mod tests {
                 .unwrap();
             let (id_rx, msg_rx) = get_message_as!(to_client_rx, EditorMessageContents::Result);
             assert_eq!(id, id_rx);
-            matches!(cast!(&msg_rx, Err), ResultErrTypes::ClientIllegalMessage);
+            assert!(matches!(
+                cast!(&msg_rx, Err),
+                ResultErrTypes::ClientIllegalMessage
+            ));
         }
 
         // 5. Send an update message with no path.
@@ -1008,7 +1014,7 @@ mod tests {
                     is_re_translation: false,
                     contents: Some(CodeChatForWeb {
                         metadata: SourceFileMetadata {
-                            mode: "".to_string(),
+                            mode: "cpp".to_string(),
                         },
                         source: CodeMirrorDiffable::Plain(CodeMirror {
                             doc: "".to_string(),

@@ -305,10 +305,9 @@ pub fn create_translation_queues(
     //
     // 1. It hasn't been used before. In this case, create the appropriate
     //    queues and start websocket and processing tasks.
-    // 2. It's in use, but was disconnected. In this case, re-use the queues and
-    //    start the websocket task; the processing task is still running.
-    // 3. It's in use by another IDE. This is an error, but I don't have a way
-    //    to detect it yet.
+    // 2. It's in use, but was disconnected. Return this as an error; the caller
+    //    can resume the connection if appropriate.
+    // 3. It's in use by another IDE. Return this as an error.
     //
     // Check case 3.
     if app_state
@@ -424,12 +423,12 @@ struct TranslationTask {
     /// Therefore, assign each file a version number. All files are sent with a
     /// unique, randomly-generated version number which define the file's
     /// version after this update is applied. Diffs also include the version
-    /// number of the file before applying the diff; the
-    // receiver's current version number must match with the sender's
-    /// pre-diff version number in order to apply the diff. When the versions
-    /// don't match, the IDE must send a full text file to the Server and Client
-    /// to re-sync. When a file is first loaded, its version number is None,
-    /// signaling that the sender must always provide the full text, not a diff.
+    /// number of the file before applying the diff; the receiver's current
+    /// version number must match with the sender's pre-diff version number in
+    /// order to apply the diff. When the versions don't match, the IDE must
+    /// send a full text file to the Server and Client to re-sync. When a file
+    /// is first loaded, its version number is None, signaling that the sender
+    /// must always provide the full text, not a diff.
     version: f64,
     /// Has the full (non-diff) version of the current file been sent? Don't
     /// send diffs until this is sent.
@@ -455,7 +454,7 @@ pub async fn translation_task(
     if !shutdown_only {
         debug!("VSCode processing task started.");
 
-        // Create a queue for HTTP requests fo communicate with this task.
+        // Create a queue for HTTP requests to communicate with this task.
         let (from_http_tx, from_http_rx) = mpsc::channel(10);
         app_state
             .processing_task_queue_tx
@@ -1204,7 +1203,9 @@ impl TranslationTask {
 // (Unix style).
 fn eol_convert(s: String, eol_type: &EolType) -> String {
     if eol_type == &EolType::Crlf {
-        s.replace("\n", "\r\n")
+        // There shouldn't be any Windows-style CRLFs -- but if there are,
+        // handle this nicely.
+        s.replace("\r\n", "\n").replace("\n", "\r\n")
     } else {
         s
     }
@@ -1247,7 +1248,7 @@ fn compare_html(
     }
 }
 
-// Given a vector of two doc blocks, compare them, ignoring newlines.
+// Given vectors of two doc blocks, compare them, ignoring newlines.
 fn doc_block_compare(a: &CodeMirrorDocBlockVec, b: &CodeMirrorDocBlockVec) -> bool {
     if a.len() != b.len() {
         return false;

@@ -22,7 +22,30 @@ Changelog
 [Github master](https://github.com/bjones1/CodeChat_Editor)
 -----------------------------------------------------------
 
-* No changes.
+* Claude code reviews revealed the following issues, which were fixed manually:
+  * Fix multi-byte Unicode encoding bug.
+  * Fix incorrect websocket shutdown sequence.
+  * On websocket disconnect and reconnect, correctly retain timeouts for
+    responses.
+  * Change websocket response timeout to a reasonable value.
+  * Provide better error reporting when `hashLocations.json` file isn't found.
+  * Improve encoder performance.
+  * Correct bug in diff computation.
+  * Correctly handle CRLFs in files that begin with a LF.
+  * Fix several XSS vulnerabilities.
+  * Remove redundant reference counting on shared state.
+  * Avoid panics when validating passwords and when converting paths to strings.
+  * Fix bugs in nested comment parser.
+  * Improve CLI interface with better userid/password parsing, error reporting,
+    and ipv6 support.
+  * Include Windows drive letter Z when looking for available drives.
+  * Use block comment delimiter found in code, not a hard-coded C-only
+    delimiter.
+  * Correct many errors in the grammar for supported languages.
+  * Add lexer support for shell scripts, Swift, TOML, and Verilog, and VHDL.
+  * Ensure math is re-typeset after saving the document.
+  * Delay math un-typesetting until all typesetting is complete.
+  * Improve error reporting in VSCode extension.
 
 Version 0.1.52 -- 2026-Apr-09
 -----------------------------

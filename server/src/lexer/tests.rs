@@ -590,19 +590,28 @@ fn test_rust() {
 
     assert_eq!(
         source_lexer(
-            r#"/* Depth 1
+            r#" /* Depth 1
   /* Depth 2 comment */
   /* Depth 2
     /* Depth 3 */ */
+  /* Depth 2
+    /* Depth 3 comment */
+   */
 More depth 1 */"#,
             rust
         ),
         [
-            build_code_block("/* Depth 1\n"),
+            build_code_block(" /* Depth 1\n"),
             build_doc_block("  ", "/*", "Depth 2 comment\n"),
             build_code_block(
                 r#"  /* Depth 2
     /* Depth 3 */ */
+  /* Depth 2
+"#
+            ),
+            build_doc_block("    ", "/*", "Depth 3 comment\n"),
+            build_code_block(
+                r#"   */
 More depth 1 */"#
             ),
         ]

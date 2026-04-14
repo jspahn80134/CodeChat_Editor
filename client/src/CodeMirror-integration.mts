@@ -82,6 +82,12 @@ import { python } from "@codemirror/lang-python";
 import { rust } from "@codemirror/lang-rust";
 import { sql } from "@codemirror/lang-sql";
 import { yaml } from "@codemirror/lang-yaml";
+import { StreamLanguage } from "@codemirror/language";
+import { shell } from "@codemirror/legacy-modes/mode/shell";
+import { swift } from "@codemirror/legacy-modes/mode/swift";
+import { toml } from "@codemirror/legacy-modes/mode/toml";
+import { verilog } from "@codemirror/legacy-modes/mode/verilog";
+import { vhdl } from "@codemirror/legacy-modes/mode/vhdl";
 import { tinymce, init } from "./tinymce-config.mjs";
 import { Editor, EditorEvent, Events } from "tinymce";
 
@@ -99,7 +105,7 @@ import {
     CodeMirrorDocBlockTuple,
     StringDiff,
     UpdateMessageContents,
-} from "./shared_types.mjs";
+} from "./shared.mjs";
 import { assert } from "./assert.mjs";
 import { show_toast } from "./show_toast.mjs";
 
@@ -179,7 +185,7 @@ export const docBlockField = StateField.define<DecorationSet>({
         for (const effect of tr.effects)
             if (effect.is(addDocBlock)) {
                 // Check that we're not overwriting text.
-                const newlines = current_view.state.doc
+                const newlines = tr.newDoc
                     .slice(effect.value.from, effect.value.to)
                     .toString();
                 if (newlines !== "\n".repeat(newlines.length)) {
@@ -202,7 +208,7 @@ export const docBlockField = StateField.define<DecorationSet>({
                             widget: new DocBlockWidget(
                                 effect.value.indent,
                                 effect.value.delimiter,
-                                effect.value.content,
+                                effect.value.contents,
                                 false,
                             ),
                             ...decorationOptions,
@@ -262,9 +268,7 @@ export const docBlockField = StateField.define<DecorationSet>({
                 to = effect.value.to ?? to;
                 const from = effect.value.from_new ?? effect.value.from;
                 // Check that we're not overwriting text.
-                const newlines = current_view.state.doc
-                    .slice(from, to)
-                    .toString();
+                const newlines = tr.newDoc.slice(from, to).toString();
                 if (newlines !== "\n".repeat(newlines.length)) {
                     report_error(`Attempt to overwrite text: "${newlines}".`);
                     window.close();
@@ -309,11 +313,12 @@ export const docBlockField = StateField.define<DecorationSet>({
         return doc_blocks;
     },
 
-    // [Provide](https://codemirror.net/docs/ref/#state.StateField^define^config.provide)
-    // extensions based on this field. See also
+    // Register this `DecorationSet` as a source of decorations for the editor
+    // view — without it, the `StateField` holds the data but nothing tells
+    // CodeMirror to render the doc block widgets. See
+    // [Provide](https://codemirror.net/docs/ref/#state.StateField^define^config.provide),
     // [EditorView.decorations](https://codemirror.net/docs/ref/#view.EditorView^decorations)
-    // and [from](https://codemirror.net/docs/ref/#state.Facet.from). TODO: I
-    // don't understand what this does, but removing it breaks the extension.
+    // and [from](https://codemirror.net/docs/ref/#state.Facet.from).
     provide: (field: StateField<DecorationSet>) =>
         EditorView.decorations.from(field),
 
@@ -323,12 +328,18 @@ export const docBlockField = StateField.define<DecorationSet>({
     // contents (including these doc blocks) to JSON, which can then be sent
     // back to the server for reassembly into a source file.
     toJSON: (value: DecorationSet, _state: EditorState) => {
-        const json = [];
+        const json_result = [];
         for (const iter = value.iter(); iter.value !== null; iter.next()) {
             const w = iter.value.spec.widget;
-            json.push([iter.from, iter.to, w.indent, w.delimiter, w.contents]);
+            json_result.push([
+                iter.from,
+                iter.to,
+                w.indent,
+                w.delimiter,
+                w.contents,
+            ]);
         }
-        return json;
+        return json_result;
     },
 
     // For loading a file from the server back into the editor, use
@@ -368,9 +379,9 @@ export const addDocBlock = StateEffect.define<{
     to: number;
     indent: string;
     delimiter: string;
-    content: string;
+    contents: string;
 }>({
-    map: ({ from, to, indent, delimiter, content }, change: ChangeDesc) => ({
+    map: ({ from, to, indent, delimiter, contents }, change: ChangeDesc) => ({
         // Update the location (from/to) of this effect due to the transaction's
         // changes. See this
         // [thread](https://discuss.codemirror.net/t/mapping-ranges-in-a-decoration/9307/3).
@@ -378,7 +389,7 @@ export const addDocBlock = StateEffect.define<{
         to: change.mapPos(to),
         indent,
         delimiter,
-        content,
+        contents,
     }),
 });
 
@@ -436,8 +447,9 @@ class DocBlockWidget extends WidgetType {
         readonly contents: string,
         readonly is_user_change: boolean,
     ) {
-        // TODO: I don't understand why I don't need to store the provided
-        // parameters in the object: `this.indent = indent;`, etc.
+        // [Typescript parameter properties](https://www.typescriptlang.org/docs/handbook/2/classes.html#parameter-properties)
+        // means these parameters are automatically promoted to class
+        // properties.
         super();
     }
 
@@ -459,9 +471,9 @@ class DocBlockWidget extends WidgetType {
             // pasting whitespace.
             `<div class="CodeChat-doc-indent" contenteditable onpaste="return false" data-delimiter=${JSON.stringify(
                 this.delimiter,
-            )}>${this.indent}</div>` +
+            )}>${sanitize_html(this.indent)}</div>` +
             // The contents of this doc block.
-            `<div class="CodeChat-doc-contents" spellcheck contenteditable>` +
+            `<div class="CodeChat-doc-contents" spellcheck="true" contenteditable>` +
             this.contents +
             "</div>";
         // TODO: this is an async call. However, CodeMirror doesn't provide
@@ -480,12 +492,14 @@ class DocBlockWidget extends WidgetType {
         if (this.is_user_change) {
             return true;
         }
-        (dom.childNodes[0] as HTMLDivElement).innerHTML = this.indent;
+        (dom.childNodes[0] as HTMLDivElement).innerHTML = sanitize_html(
+            this.indent,
+        );
 
         // The contents div could be a TinyMCE instance, or just a plain div.
         // Handle both cases.
         const [contents_div, is_tinymce] = get_contents(dom);
-        window.MathJax.typesetClear(contents_div);
+        window.MathJax.typesetClear([contents_div]);
         if (is_tinymce) {
             // Save the cursor location before the update, then restore it
             // afterwards, if TinyMCE has focus.
@@ -531,6 +545,13 @@ class DocBlockWidget extends WidgetType {
         }
     }
 }
+
+// Native DOM sanitizer.
+const sanitize_html = (html: string) => {
+    const div = document.createElement("div");
+    div.textContent = html;
+    return div.innerHTML;
+};
 
 // Typeset the provided node; taken from the
 // [MathJax docs](https://docs.mathjax.org/en/latest/web/typeset.html#handling-asynchronous-typesetting).
@@ -597,6 +618,11 @@ const element_is_in_doc_block = (
 //    lead to nasty bugs at some point.
 // 4. When an HTML doc block is assigned to the TinyMCE instance for editing,
 //    the dirty flag is set. This must be ignored.
+//
+// Potential bug: race condition. If one doc block is modified and schedules
+// on\_dirty, but then another doc block is modified, then modifications to the
+// first doc block would be lost. However, I doubt the user can switch doc
+// blocks this fast.
 const on_dirty = (
     // The div that's dirty. It must be a child of the doc block div.
     event_target: HTMLElement,
@@ -648,7 +674,7 @@ const on_dirty = (
     });
 };
 
-// Handle cursur movement and mouse selection in a doc block.
+// Handle cursor movement and mouse selection in a doc block.
 export const DocBlockPlugin = ViewPlugin.fromClass(
     class {
         constructor(_view: EditorView) {}
@@ -767,8 +793,8 @@ export const DocBlockPlugin = ViewPlugin.fromClass(
                     setTimeout(async () => {
                         // Before untypesetting, make sure all other typesets
                         // finish.
-                        await new Promise((resolve) =>
-                            window.MathJax.whenReady(resolve(undefined)),
+                        await new Promise<void>((resolve) =>
+                            window.MathJax.whenReady(() => resolve()),
                         );
                         // Untypeset math in the old doc block and the current
                         // doc block before moving its contents around.
@@ -786,7 +812,7 @@ export const DocBlockPlugin = ViewPlugin.fromClass(
                         //
                         // Copy the current TinyMCE instance contents into a
                         // contenteditable div.
-                        const old_contents_div = document.createElement("div")!;
+                        const old_contents_div = document.createElement("div");
                         old_contents_div.className = "CodeChat-doc-contents";
                         old_contents_div.contentEditable = "true";
                         old_contents_div.innerHTML =
@@ -865,7 +891,7 @@ const autosaveExtension = EditorView.updateListener.of(
         let isChanged = v.docChanged;
         // Look for changes to doc blocks as well; skip if a change was already
         // detected for efficiency.
-        if (!v.docChanged && v.transactions?.length) {
+        if (!v.docChanged && v.transactions.length) {
             // Check each effect of each transaction.
             outer: for (const tr of v.transactions) {
                 for (const effect of tr.effects) {
@@ -926,9 +952,9 @@ export const CodeMirror_load = async (
         let parser;
         // TODO: dynamically load the parser.
         switch (codechat_for_web.metadata.mode) {
-            // Languages with a parser
+            // Languages with a parser.
             case "sh":
-                parser = cpp();
+                parser = StreamLanguage.define(shell);
                 break;
             case "cpp":
                 parser = cpp();
@@ -960,32 +986,36 @@ export const CodeMirror_load = async (
             case "sql":
                 parser = sql();
                 break;
+            case "swift":
+                parser = StreamLanguage.define(swift);
+                break;
+            case "toml":
+                parser = StreamLanguage.define(toml);
+                break;
             case "typescript":
                 parser = javascript({ typescript: true });
+                break;
+            case "vhdl":
+                parser = StreamLanguage.define(vhdl);
+                break;
+            case "verilog":
+                parser = StreamLanguage.define(verilog);
                 break;
             case "yaml":
                 parser = yaml();
                 break;
 
             // Languages without a parser.
+            //
+            // JSON5 allows comments, but JSON doesn't.
             case "json5":
                 parser = json();
                 break;
+            // Nothing available. Python isn't even close.
             case "matlab":
                 parser = python();
                 break;
-            case "swift":
-                parser = python();
-                break;
-            case "toml":
-                parser = json();
-                break;
-            case "vhdl":
-                parser = cpp();
-                break;
-            case "verilog":
-                parser = cpp();
-                break;
+            // An approximation for Vlang.
             case "v":
                 parser = javascript();
                 break;
@@ -1088,7 +1118,7 @@ export const CodeMirror_load = async (
                         to: add[1],
                         indent: add[2],
                         delimiter: add[3],
-                        content: add[4],
+                        contents: add[4],
                     }),
                 );
             } else if ("Update" in transaction) {

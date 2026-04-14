@@ -54,7 +54,7 @@ Implementation
       * [tinymce-config.mts](client/src/tinymce-config.mts)
       * [graphviz-webcomponent-setup.mjs](client/src/graphviz-webcomponent-setup.mjs)
       * [Mermaid](client/src/third-party/wc-mermaid/developer.md)
-      * [shared\_types.mts](client/src/shared_types.mts)
+      * [shared.mts](client/src/shared.mts)
       * [assert.mts](client/src/assert.mts)
       * [show\_toast.mts](client/src/show_toast.mts)
     * [global.d.ts](client/src/global.d.ts)

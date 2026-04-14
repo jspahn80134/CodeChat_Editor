@@ -25,6 +25,7 @@ export const show_toast = (text: string) =>
         duration: 10000,
         newWindow: true,
         close: true,
+        escapeMarkup: true,
         gravity: "top",
         position: "right",
         stopOnFocus: true,

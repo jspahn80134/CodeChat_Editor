@@ -46,7 +46,7 @@ import {
     MessageResult,
     rand,
     UpdateMessageContents,
-} from "../../../client/src/shared_types.mjs";
+} from "../../../client/src/shared.mjs";
 import {
     DEBUG_ENABLED,
     MAX_MESSAGE_LENGTH,
@@ -417,7 +417,9 @@ export const activate = (context: vscode.ExtensionContext) => {
                             const editor = get_text_editor(doc);
                             const scroll_line = current_update.scroll_position;
                             if (scroll_line !== undefined && editor) {
-                                ignore_selection_change = true;
+                                // Don't set `ignore_scroll_position` here,
+                                // since `revealRange` doesn't change the
+                                // editor's text selection.
                                 const scroll_position = new vscode.Position(
                                     // The VSCode line is zero-based; the
                                     // CodeMirror line is one-based.
@@ -450,6 +452,7 @@ export const activate = (context: vscode.ExtensionContext) => {
                                         cursor_position,
                                     ),
                                 ];
+                                ignore_selection_change = false;
                             }
                             await sendResult(id);
                             break;
@@ -522,9 +525,7 @@ export const activate = (context: vscode.ExtensionContext) => {
                             // Report if this was an error.
                             const result_contents = value as MessageResult;
                             if ("Err" in result_contents) {
-                                const err = result_contents[
-                                    "Err"
-                                ] as ResultErrTypes;
+                                const err = result_contents["Err"];
                                 if (
                                     err instanceof Object &&
                                     "OutOfSync" in err
@@ -535,11 +536,10 @@ export const activate = (context: vscode.ExtensionContext) => {
                                     );
                                     send_update(true);
                                 } else {
-                                    // If the client is out of sync, re-sync it.
-                                    if (result_contents)
-                                        show_error(
-                                            `Error in message ${id}: ${JSON.stringify(err)}`,
-                                        );
+                                    // Report the error.
+                                    show_error(
+                                        `Error in message ${id}: ${JSON.stringify(err)}`,
+                                    );
                                 }
                             }
                             break;
@@ -662,7 +662,7 @@ const send_update = (this_is_dirty: boolean) => {
                     // the user to rapidly cycle through several editors without
                     // needing to reload the Client with each cycle.
                     current_editor = ate;
-                    const current_file = ate!.document.fileName;
+                    const current_file = ate.document.fileName;
                     console_log(
                         `CodeChat Editor extension: sending CurrentFile(${current_file}}).`,
                     );

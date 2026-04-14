@@ -249,7 +249,7 @@ fn quick_copy_dir<P: AsRef<Path>>(src: P, dest: P, files: Option<P>) -> io::Resu
     // Per
     // [these docs](https://learn.microsoft.com/en-us/troubleshoot/windows-server/backup-and-storage/return-codes-used-robocopy-utility),
     // check the return code.
-    if cfg!(windows) && exit_code >= 8 || !cfg!(windows) && exit_code != 0 {
+    if (cfg!(windows) && exit_code >= 8) || (!cfg!(windows) && exit_code != 0) {
         Err(io::Error::other(format!(
             "Copy process return code {exit_code} indicates failure."
         )))
@@ -271,6 +271,8 @@ fn remove_dir_all_if_exists<P: AsRef<Path> + std::fmt::Display>(path: P) -> io::
     Ok(())
 }
 
+/// Search and replace a file using the regex. It's currently only used to
+/// update the version of a file; it does only one replacement.
 fn search_and_replace_file<
     P: AsRef<Path> + std::fmt::Display,
     S1: AsRef<str> + std::fmt::Display,
@@ -283,6 +285,8 @@ fn search_and_replace_file<
     let file_contents = fs::read_to_string(&path)?;
     let re = Regex::new(search_regex.as_ref())
         .map_err(|err| io::Error::other(format!("Error in search regex {search_regex}: {err}")))?;
+    // Note that this does only one replacement -- there should be exactly one
+    // version number to replace in a file.
     let file_contents_replaced = re.replace(&file_contents, replace_string.as_ref());
     assert_ne!(
         file_contents, file_contents_replaced,
@@ -413,7 +417,7 @@ fn run_install(dev: bool) -> io::Result<()> {
             cargo binstall cargo-outdated --no-confirm;
             info "cargo binstall cargo-sort";
             cargo binstall cargo-sort --no-confirm;
-            info "cargo binstall cargo-audio";
+            info "cargo binstall cargo-audit";
             cargo binstall cargo-audit --no-confirm;
         )?;
     }
@@ -427,7 +431,7 @@ fn run_update() -> io::Result<()> {
     run_cmd!(
         info "Builder: cargo update";
         cargo update --manifest-path=$BUILDER_PATH/Cargo.toml;
-        info "VSCoe extension: cargo update";
+        info "VSCode extension: cargo update";
         cargo update --manifest-path=$VSCODE_PATH/Cargo.toml;
         info "test_utils: cargo update"
         cargo update --manifest-path=$TEST_UTILS_PATH/Cargo.toml;
@@ -478,7 +482,7 @@ fn run_format_and_lint(check_only: bool) -> io::Result<()> {
         cargo audit --file=$BUILDER_PATH/Cargo.lock --no-fetch;
         info "VSCode extension: cargo audit";
         cargo audit --file=$VSCODE_PATH/Cargo.lock --no-fetch;
-        info "test_utils: cargo clippy and fmt"
+        info "test_utils: cargo audit"
         cargo audit --file=$TEST_UTILS_PATH/Cargo.lock --no-fetch;
 
         info "cargo sort";
@@ -578,7 +582,7 @@ fn run_client_build(
         true,
     )?;
 
-    // \<a id="#pdf.js>The PDF viewer for use with VSCode. Built it separately,
+    // \<a id="#pdf.js>The PDF viewer for use with VSCode. Build it separately,
     // since it's loaded apart from the rest of the Client.
     run_script(
         &esbuild,

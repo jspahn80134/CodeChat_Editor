@@ -27,7 +27,7 @@ import "mocha/mocha.js";
 import "mocha/mocha.css";
 import { EditorView } from "@codemirror/view";
 import { ChangeSpec, EditorState, EditorSelection } from "@codemirror/state";
-import { CodeMirror, CodeMirrorDocBlockTuple } from "./shared_types.mjs";
+import { CodeMirror, CodeMirrorDocBlockTuple } from "./shared.mjs";
 import {
     DocBlockPlugin,
     CodeMirror_JSON_fields,
