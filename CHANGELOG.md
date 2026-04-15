@@ -22,7 +22,13 @@ Changelog
 [Github master](https://github.com/bjones1/CodeChat_Editor)
 -----------------------------------------------------------
 
-*  No changes.
+* No changes.
+
+Version 0.1.54 -- 2026-Apr-16
+-----------------------------
+
+* Fix double scroll regression -- cursor movement in the Client caused the IDE
+  to move, which then incorrectly caused the Client to move again.
 
 Version 0.1.53 -- 2026-Apr-14
 -----------------------------
