@@ -452,7 +452,12 @@ export const activate = (context: vscode.ExtensionContext) => {
                                         cursor_position,
                                     ),
                                 ];
-                                ignore_selection_change = false;
+                                // I'd prefer to set `ignore_selection_change =
+                                // false` here, but even doing so after a
+                                // `setTimeout(..., 0)` doesn't work; evidently,
+                                // the event is generated at some later time.
+                                // Instead, depend on the event to always clear
+                                // this flag (a source of potential bugs).
                             }
                             await sendResult(id);
                             break;
