@@ -302,9 +302,19 @@ pub async fn goto_line(
         .await
         .unwrap();
     // The cursor movement produces a cursor/scroll position update after an
-    // autosave delay.
+    // autosave delay. Sometimes, we get an update just before the movement; ignore that.
+    let mut msg = codechat_server.get_message_timeout(TIMEOUT).await.unwrap();
+    if msg.id == *client_id
+        && let EditorMessageContents::Update(update) = &msg.message
+        && update.file_path == path_str
+        && update.contents.is_none()
+        && update.cursor_position != Some(line)
+    {
+        *client_id += MESSAGE_ID_INCREMENT;
+        msg = codechat_server.get_message_timeout(TIMEOUT).await.unwrap();
+    }
     assert_eq!(
-        codechat_server.get_message_timeout(TIMEOUT).await.unwrap(),
+        msg,
         EditorMessage {
             id: *client_id,
             message: EditorMessageContents::Update(UpdateMessageContents {
