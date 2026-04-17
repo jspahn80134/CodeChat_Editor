@@ -310,6 +310,7 @@ pub async fn goto_line(
         && update.contents.is_none()
         && update.cursor_position != Some(line)
     {
+        codechat_server.send_result(*client_id, None).await.unwrap();
         *client_id += MESSAGE_ID_INCREMENT;
         msg = codechat_server.get_message_timeout(TIMEOUT).await.unwrap();
     }

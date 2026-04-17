@@ -374,7 +374,7 @@ async fn test_6_core(
 
     // Perform edits.
     body_content.send_keys("a").await.unwrap();
-    let client_id = INITIAL_CLIENT_MESSAGE_ID;
+    let mut client_id = INITIAL_CLIENT_MESSAGE_ID;
     let msg = codechat_server.get_message_timeout(TIMEOUT).await.unwrap();
     let client_version = get_version(&msg);
     assert_eq!(
@@ -405,6 +405,24 @@ async fn test_6_core(
         }
     );
     let version = client_version;
+    codechat_server.send_result(client_id, None).await.unwrap();
+    client_id += MESSAGE_ID_INCREMENT;
+
+    // Wait for a second update that's empty. Not sure why.
+    assert_eq!(
+        codechat_server.get_message_timeout(TIMEOUT).await.unwrap(),
+        EditorMessage {
+            id: client_id,
+            message: EditorMessageContents::Update(UpdateMessageContents {
+                file_path: path_str.clone(),
+                cursor_position: None,
+                includes_marker: false,
+                scroll_position: None,
+                is_re_translation: false,
+                contents: None,
+            })
+        }
+    );
     codechat_server.send_result(client_id, None).await.unwrap();
     //client_id += MESSAGE_ID_INCREMENT;
 
