@@ -602,6 +602,9 @@ fn doc_block_html_to_markdown(
     // If provided, the index of each successive node in the DOM, ending with
     // the offset within the last node (which must be a text node), at which a
     // marker character will be inserted.
+    //
+    // This will be applied to each doc block -- when this parameter is
+    // provided, it's typically called with a vec containing only one doc block.
     dom_offsets: &Option<Vec<usize>>,
 ) -> Result<Vec<CodeDocBlock>, HtmlToMarkdownWrappedError> {
     let mut converter = HtmlToMarkdownWrapped::new();
@@ -1062,13 +1065,13 @@ fn html_to_tree(
     .read_from(&mut html.as_bytes())?;
 
     if let Some(dom_offsets) = dom_offsets {
-        // Each element in `dom_offsets` is the index of a node in the
-        // `dom`. Take the first index, then descend into the indicated node.
-        // Repeat this process until the last node, which should be a text node.
-        // The last index is the offset with the text contents to insert a
+        // Each element in `dom_offsets` is the index of a node in the `dom`.
+        // Take the first index, then descend into the indicated node. Repeat
+        // this process until the last node, which should be a text node. The
+        // last index is the offset with the text contents to insert a
         // `UNICODE_CURSOR_MARKER` character. Any failures (index exceeds number
         // of nodes, etc.) use an approximation where possible.
-        let mut current_node = dom.document.clone();
+        let mut current_node = get_dom_body(&dom.document);
         let last_idx = dom_offsets.len().saturating_sub(1);
         'outer: for (i, &offset) in dom_offsets.iter().enumerate() {
             if i == last_idx {
@@ -1117,6 +1120,18 @@ pub fn transform_html<T: FnOnce(Rc<Node>)>(html: &str, transform: T) -> io::Resu
         ..Default::default()
     };
     let mut bytes = vec![];
+    serialize(
+        &mut bytes,
+        &SerializableHandle::from(get_dom_body(&tree)),
+        so,
+    )?;
+    let html_out = String::from_utf8(bytes).map_err(io::Error::other)?;
+
+    Ok(html_out)
+}
+
+/// Get the body element from a top-level DOM.
+fn get_dom_body(document: &Rc<Node>) -> Rc<Node> {
     // HTML is:
     //
     // ```html
@@ -1125,11 +1140,7 @@ pub fn transform_html<T: FnOnce(Rc<Node>)>(html: &str, transform: T) -> io::Resu
     //  <body>...</body>  <-- element 1
     // </html>
     // ```
-    let body = tree.children.borrow()[0].children.borrow()[1].clone();
-    serialize(&mut bytes, &SerializableHandle::from(body.clone()), so)?;
-    let html_out = String::from_utf8(bytes).map_err(io::Error::other)?;
-
-    Ok(html_out)
+    document.children.borrow()[0].children.borrow()[1].clone()
 }
 
 // HTML produced from Markdown needs additional processing, termed hydration:

@@ -24,7 +24,7 @@
 use std::{io, path::PathBuf, rc::Rc, str::FromStr};
 
 // ### Third-party
-use indoc::indoc;
+use indoc::{formatdoc, indoc};
 use markup5ever_rcdom::Node;
 use predicates::prelude::predicate::str;
 use pretty_assertions::assert_eq;
@@ -42,10 +42,10 @@ use crate::{
     processing::{
         CodeDocBlockVecToSourceError, CodeMirrorDiffable, CodeMirrorDocBlockDelete,
         CodeMirrorDocBlockTransaction, CodeMirrorDocBlockUpdate, CodechatForWebToSourceError,
-        HtmlToMarkdownWrapped, SourceToCodeChatForWebError, byte_index_of,
+        HtmlToMarkdownWrapped, SourceToCodeChatForWebError, UNICODE_CURSOR_MARKER, byte_index_of,
         code_doc_block_vec_to_source, code_mirror_to_code_doc_blocks, codechat_for_web_to_source,
-        dehydrating_walk_node, diff_code_mirror_doc_blocks, diff_str, html_to_tree, hydrate_html,
-        markdown_to_html, source_to_codechat_for_web,
+        dehydrating_walk_node, diff_code_mirror_doc_blocks, diff_str, doc_block_html_to_markdown,
+        html_to_tree, hydrate_html, markdown_to_html, source_to_codechat_for_web,
     },
 };
 use test_utils::{cast, prep_test_dir, test_utils::stringit};
@@ -1241,6 +1241,32 @@ fn test_diff_2() {
                 contents: vec![]
             }),
         ]
+    );
+}
+
+#[test]
+fn test_doc_block_html_to_markdown_1() {
+    assert_eq!(
+        doc_block_html_to_markdown(
+            vec![build_doc_block(
+                "",
+                "",
+                "<p>Index 0</p><p>Index 1.0<b>Index 1.1</b>012345</p>"
+            )],
+            &Some(vec![1, 2, 3]),
+        )
+        .unwrap(),
+        vec![build_doc_block(
+            "",
+            "",
+            &formatdoc!(
+                "
+                Index 0
+
+                Index 1.0**Index 1.1**012{UNICODE_CURSOR_MARKER}345
+                "
+            )
+        )]
     );
 }
 
