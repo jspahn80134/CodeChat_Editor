@@ -420,15 +420,14 @@ pub fn codechat_for_web_to_source(
 ) -> Result<String, CodechatForWebToSourceError> {
     let lexer_name = &codechat_for_web.metadata.mode;
     // Given the mode, find the lexer.
-    let lexer: &std::sync::Arc<crate::lexer::LanguageLexerCompiled> =
-        match LEXERS.map_mode_to_lexer.get(lexer_name) {
-            Some(v) => v,
-            None => {
-                return Err(CodechatForWebToSourceError::InvalidLexer(
-                    lexer_name.clone(),
-                ));
-            }
-        };
+    let lexer = match LEXERS.map_mode_to_lexer.get(lexer_name) {
+        Some(v) => v,
+        None => {
+            return Err(CodechatForWebToSourceError::InvalidLexer(
+                lexer_name.clone(),
+            ));
+        }
+    };
 
     // Extract the plain (not diffed) CodeMirror contents.
     let CodeMirrorDiffable::Plain(ref code_mirror) = codechat_for_web.source else {
@@ -577,7 +576,7 @@ impl HtmlToMarkdownWrapped {
                 // ignored (by an
                 // [ignoreFileDirective](https://dprint.dev/plugins/markdown/config/)).
                 // Simply return the unchanged text in this case.
-                .unwrap_or_else(|| converted.to_string()),
+                .unwrap_or(converted),
         )
     }
 
@@ -585,11 +584,7 @@ impl HtmlToMarkdownWrapped {
         let converted = self.html_to_markdown.finalize_conversion();
         Ok(
             format_text(&converted, &self.word_wrap_config, |_, _, _| Ok(None))?
-                // A return value of `None` means the text was unchanged or
-                // ignored (by an
-                // [ignoreFileDirective](https://dprint.dev/plugins/markdown/config/)).
-                // Simply return the unchanged text in this case.
-                .unwrap_or_else(|| converted.to_string()),
+                .unwrap_or(converted),
         )
     }
 
@@ -606,9 +601,11 @@ fn doc_block_html_to_markdown(
     mut code_doc_block_vec: Vec<CodeDocBlock>,
 ) -> Result<Vec<CodeDocBlock>, HtmlToMarkdownWrappedError> {
     let mut converter = HtmlToMarkdownWrapped::new();
-    for code_doc_block in &mut code_doc_block_vec {
+    let mut last_doc_block_index = None;
+    for (index, code_doc_block) in &mut code_doc_block_vec.iter_mut().enumerate() {
         if let CodeDocBlock::DocBlock(doc_block) = code_doc_block {
-            let tree = html_to_tree(&doc_block.contents)?;
+            last_doc_block_index = Some(index);
+            let tree = html_to_tree(&doc_block.contents, dom_offsets)?;
             dehydrating_walk_node(&tree);
 
             // Compute a line wrap width based on the current indent. Set a
@@ -629,12 +626,15 @@ fn doc_block_html_to_markdown(
         }
     }
 
-    // Output the finalized conversion.
-    if let Some(code_doc_block) = code_doc_block_vec.last_mut()
-        && let CodeDocBlock::DocBlock(doc_block) = code_doc_block
-    {
+    // Append the finalized conversion to the last doc block.
+    if let Some(last_doc_block_index) = last_doc_block_index {
+        let CodeDocBlock::DocBlock(ref mut last_doc_block) =
+            code_doc_block_vec[last_doc_block_index]
+        else {
+            unreachable!();
+        };
         let last = converter.last()?;
-        doc_block.contents.push_str(&last);
+        last_doc_block.contents.push_str(&last);
     }
 
     Ok(code_doc_block_vec)
