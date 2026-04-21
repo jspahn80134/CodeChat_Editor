@@ -442,14 +442,14 @@ pub fn codechat_for_web_to_source(
         }
         // Translate the HTML document to Markdown.
         let converter = HtmlToMarkdownWrapped::new();
-        let tree = html_to_tree(&code_mirror.doc)?;
+        let tree = html_to_tree(&code_mirror.doc, &None)?;
         dehydrating_walk_node(&tree);
         return converter
             .convert(&tree)
             .map_err(CodechatForWebToSourceError::HtmlToMarkdownFailed);
     }
     let code_doc_block_vec_html = code_mirror_to_code_doc_blocks(code_mirror);
-    let code_doc_block_vec = doc_block_html_to_markdown(code_doc_block_vec_html)
+    let code_doc_block_vec = doc_block_html_to_markdown(code_doc_block_vec_html, &None)
         .map_err(CodechatForWebToSourceError::HtmlToMarkdownFailed)?;
     code_doc_block_vec_to_source(&code_doc_block_vec, lexer)
         .map_err(CodechatForWebToSourceError::CannotTranslateCodeChat)
@@ -599,6 +599,10 @@ impl HtmlToMarkdownWrapped {
 // Transform HTML in doc blocks to Markdown.
 fn doc_block_html_to_markdown(
     mut code_doc_block_vec: Vec<CodeDocBlock>,
+    // If provided, the index of each successive node in the DOM, ending with
+    // the offset within the last node (which must be a text node), at which a
+    // marker character will be inserted.
+    dom_offsets: &Option<Vec<usize>>,
 ) -> Result<Vec<CodeDocBlock>, HtmlToMarkdownWrappedError> {
     let mut converter = HtmlToMarkdownWrapped::new();
     let mut last_doc_block_index = None;
@@ -1033,8 +1037,17 @@ fn markdown_to_html(markdown: &str) -> String {
     html_output
 }
 
-// Use html5ever to parse a string containing HTML to a DOM tree.
-fn html_to_tree(html: &str) -> io::Result<Rc<Node>> {
+// Mark the current cursor position with a
+// [private use area code point](https://en.wikipedia.org/wiki/Private_Use_Areas),
+// something that's unlike to appear in source code.
+pub const UNICODE_CURSOR_MARKER: char = '\u{E83B}';
+
+/// Use html5ever to parse a string containing HTML to a DOM tree.
+fn html_to_tree(
+    html: &str,
+    // See the same parameter from `doc_block_html_to_markdown`.
+    dom_offsets: &Option<Vec<usize>>,
+) -> io::Result<Rc<Node>> {
     let dom = parse_document(
         RcDom::default(),
         ParseOpts {
@@ -1048,12 +1061,15 @@ fn html_to_tree(html: &str) -> io::Result<Rc<Node>> {
     .from_utf8()
     .read_from(&mut html.as_bytes())?;
 
-    // TODO: should we report parse errors? If so, how and where?
-    /***
-       if let Some(err) = dom.errors.borrow().first() {
-           //return Err(io::Error::other(err.to_string()));
-       }
-    */
+    if let Some(dom_offsets) = dom_offsets {
+        // TODO: each element in `dom_offsets` is the index of a node in the
+        // `dom`. Take the first index, then descend into the indicated node.
+        // Repeat this process until the last node, which should be a text node.
+        // The last index is the offset with the text contents to insert a
+        // `UNICODE_CURSOR_MARKER` character. Any failures (index exceeds number
+        // of nodes, etc.) should use an approximation where possible (use the
+        // last node).
+    }
 
     Ok(dom.document)
 }
@@ -1061,7 +1077,7 @@ fn html_to_tree(html: &str) -> io::Result<Rc<Node>> {
 // A framework to transform HTML by parsing it to a DOM tree, walking the tree,
 // then serializing the tree back to an HTML string.
 pub fn transform_html<T: FnOnce(Rc<Node>)>(html: &str, transform: T) -> io::Result<String> {
-    let tree = html_to_tree(html)?;
+    let tree = html_to_tree(html, &None)?;
     transform(tree.clone());
 
     // Serialize the transformed DOM back to a string.

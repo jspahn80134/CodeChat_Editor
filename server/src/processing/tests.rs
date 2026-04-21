@@ -1326,7 +1326,7 @@ fn test_hydrate_html_1() {
 }
 
 fn dehydrate_html(html: &str) -> io::Result<Rc<Node>> {
-    let tree = html_to_tree(html)?;
+    let tree = html_to_tree(html, &None)?;
     dehydrating_walk_node(&tree);
     //println!("{:#?}", tree);
     Ok(tree)

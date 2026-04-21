@@ -58,8 +58,8 @@ use code_chat_editor::{
         CodeChatForWeb, CodeMirrorDiff, CodeMirrorDiffable, SourceFileMetadata, StringDiff,
     },
     webserver::{
-        EditorMessage, EditorMessageContents, INITIAL_CLIENT_MESSAGE_ID, MESSAGE_ID_INCREMENT,
-        ResultOkTypes, UpdateMessageContents, set_root_path,
+        CursorPosition, EditorMessage, EditorMessageContents, INITIAL_CLIENT_MESSAGE_ID,
+        MESSAGE_ID_INCREMENT, ResultOkTypes, UpdateMessageContents, set_root_path,
     },
 };
 use test_utils::{cast, prep_test_dir};
@@ -112,7 +112,7 @@ async fn test_4_core(
             id: client_id,
             message: EditorMessageContents::Update(UpdateMessageContents {
                 file_path: path_str.clone(),
-                cursor_position: Some(1),
+                cursor_position: Some(CursorPosition::Line(1)),
                 scroll_position: Some(1.0),
                 is_re_translation: false,
                 contents: None,
@@ -130,7 +130,7 @@ async fn test_4_core(
         &mut client_id,
         &mut client_version,
         "python",
-        Some(3),
+        Some(CursorPosition::Line(3)),
         Some(1.0),
     )
     .await;
@@ -142,7 +142,7 @@ async fn test_4_core(
         &mut client_id,
         &mut client_version,
         "python",
-        Some(5),
+        Some(CursorPosition::Line(5)),
         Some(1.0),
     )
     .await;
@@ -206,7 +206,7 @@ async fn test_5_core(
             id: client_id,
             message: EditorMessageContents::Update(UpdateMessageContents {
                 file_path: path_str.clone(),
-                cursor_position: Some(1),
+                cursor_position: Some(CursorPosition::Line(1)),
                 scroll_position: Some(1.0),
                 is_re_translation: false,
                 contents: None,
@@ -232,7 +232,7 @@ async fn test_5_core(
             id: client_id,
             message: EditorMessageContents::Update(UpdateMessageContents {
                 file_path: path_str.clone(),
-                cursor_position: Some(1),
+                cursor_position: Some(CursorPosition::Line(1)),
                 scroll_position: Some(1.0),
                 is_re_translation: false,
                 contents: Some(CodeChatForWeb {
@@ -295,7 +295,7 @@ async fn test_5_core(
             id: client_id,
             message: EditorMessageContents::Update(UpdateMessageContents {
                 file_path: path_str.clone(),
-                cursor_position: Some(1),
+                cursor_position: Some(CursorPosition::Line(1)),
                 scroll_position: Some(1.0),
                 is_re_translation: false,
                 contents: Some(CodeChatForWeb {
@@ -416,7 +416,6 @@ async fn test_6_core(
             message: EditorMessageContents::Update(UpdateMessageContents {
                 file_path: path_str.clone(),
                 cursor_position: None,
-                includes_marker: false,
                 scroll_position: None,
                 is_re_translation: false,
                 contents: None,

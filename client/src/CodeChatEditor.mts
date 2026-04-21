@@ -76,6 +76,7 @@ import { show_toast } from "./show_toast.mjs";
 
 // ### CSS
 import "./css/CodeChatEditor.css";
+import { CursorPosition } from "./rust-types/CursorPosition.js";
 
 // Data structures
 // ---------------
@@ -103,12 +104,12 @@ declare global {
             open_lp: (
                 codechat_for_web: CodeChatForWeb,
                 is_re_translation: boolean,
-                cursor_line?: number,
+                cursor_position?: CursorPosition,
                 scroll_line?: number,
             ) => Promise<void>;
             on_save: (_only_if_dirty: boolean) => Promise<void>;
             scroll_to_line: (
-                cursor_line?: number,
+                cursor_position?: CursorPosition,
                 scroll_line?: number,
             ) => void;
             show_toast: (text: string) => void;
@@ -172,7 +173,7 @@ const is_doc_only = () => {
 const open_lp = async (
     codechat_for_web: CodeChatForWeb,
     is_re_translation: boolean,
-    cursor_line?: number,
+    cursor_line?: CursorPosition,
     scroll_line?: number,
 ) =>
     // Wait for the DOM to load before opening the file.
@@ -205,7 +206,7 @@ const _open_lp = async (
     // associated metadata. See [`AllSource`](#AllSource).
     codechat_for_web: CodeChatForWeb,
     is_re_translation: boolean,
-    cursor_line?: number,
+    cursor_position?: CursorPosition,
     scroll_line?: number,
 ) => {
     // Note that globals, such as `is_dirty` and document contents, may change
@@ -331,7 +332,7 @@ const _open_lp = async (
                 }
             }
             await mathJaxTypeset(codechat_body);
-            scroll_to_line(cursor_line, scroll_line);
+            scroll_to_line(cursor_position, scroll_line);
         } else {
             if (is_dirty && "Diff" in source) {
                 // Send an `OutOfSync` response, so that the IDE will send the
@@ -349,7 +350,7 @@ const _open_lp = async (
                     codechat_body,
                     codechat_for_web,
                     [],
-                    cursor_line,
+                    cursor_position,
                     scroll_line,
                 );
             }
@@ -656,11 +657,14 @@ const save_then_navigate = (codeChatEditorUrl: URL) => {
 
 // This can be called by the framework. Therefore, make no assumptions about
 // variables being valid; it be called before a file is loaded, etc.
-const scroll_to_line = (cursor_line?: number, scroll_line?: number) => {
+const scroll_to_line = (
+    cursor_position?: CursorPosition,
+    scroll_line?: number,
+) => {
     if (is_doc_only()) {
         // TODO.
     } else {
-        codemirror_scroll_to_line(cursor_line, scroll_line);
+        codemirror_scroll_to_line(cursor_position, scroll_line);
     }
 };
 

@@ -50,7 +50,7 @@ use code_chat_editor::{
     ide::CodeChatEditorServer,
     processing::{CodeChatForWeb, CodeMirrorDiff, CodeMirrorDiffable, SourceFileMetadata},
     webserver::{
-        EditorMessage, EditorMessageContents, MESSAGE_ID_INCREMENT, ResultOkTypes,
+        CursorPosition, EditorMessage, EditorMessageContents, MESSAGE_ID_INCREMENT, ResultOkTypes,
         UpdateMessageContents,
     },
 };
@@ -308,7 +308,7 @@ pub async fn goto_line(
         && let EditorMessageContents::Update(update) = &msg.message
         && update.file_path == path_str
         && update.contents.is_none()
-        && update.cursor_position != Some(line)
+        && update.cursor_position != Some(CursorPosition::Line(line))
     {
         codechat_server.send_result(*client_id, None).await.unwrap();
         *client_id += MESSAGE_ID_INCREMENT;
@@ -320,7 +320,7 @@ pub async fn goto_line(
             id: *client_id,
             message: EditorMessageContents::Update(UpdateMessageContents {
                 file_path: path_str.to_string(),
-                cursor_position: Some(line),
+                cursor_position: Some(CursorPosition::Line(line)),
                 scroll_position: Some(1.0),
                 is_re_translation: false,
                 contents: None,
@@ -433,7 +433,7 @@ pub async fn get_empty_client_update(
     client_id: &mut f64,
     client_version: &mut f64,
     mode: &str,
-    cursor_position: Option<u32>,
+    cursor_position: Option<CursorPosition>,
     scroll_position: Option<f32>,
 ) {
     let msg = codechat_server.get_message_timeout(TIMEOUT).await.unwrap();

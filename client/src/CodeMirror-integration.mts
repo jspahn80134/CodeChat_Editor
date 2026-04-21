@@ -108,6 +108,7 @@ import {
 } from "./shared.mjs";
 import { assert } from "./assert.mjs";
 import { show_toast } from "./show_toast.mjs";
+import { CursorPosition } from "./rust-types/CursorPosition";
 
 // Globals
 // -------
@@ -922,7 +923,7 @@ export const CodeMirror_load = async (
     codechat_for_web: CodeChatForWeb,
     // Additional extensions.
     extensions: Array<Extension>,
-    cursor_line?: number,
+    cursor_position?: CursorPosition,
     scroll_line?: number,
 ) => {
     if ("Plain" in codechat_for_web.source) {
@@ -1135,12 +1136,15 @@ export const CodeMirror_load = async (
             annotations: noAutosaveAnnotation.of(true),
         });
     }
-    scroll_to_line(cursor_line, scroll_line);
+    scroll_to_line(cursor_position, scroll_line);
 };
 
 // Scroll to the provided `scroll_line`; place the cursor at `cursor_line`.
-export const scroll_to_line = (cursor_line?: number, scroll_line?: number) => {
-    if (cursor_line === undefined && scroll_line === undefined) {
+export const scroll_to_line = (
+    cursor_position?: CursorPosition,
+    scroll_line?: number,
+) => {
+    if (cursor_position === undefined && scroll_line === undefined) {
         return;
     }
 
@@ -1150,13 +1154,19 @@ export const scroll_to_line = (cursor_line?: number, scroll_line?: number) => {
     const dispatch_data: TransactionSpec = {
         annotations: noAutosaveAnnotation.of(true),
     };
-    if (cursor_line !== undefined) {
+    if (cursor_position !== undefined) {
         // Translate the line numbers to a position.
-        const cursor_pos = current_view?.state.doc.line(cursor_line).from;
-        dispatch_data.selection = {
-            anchor: cursor_pos,
-            head: cursor_pos,
-        };
+        if ("Line" in cursor_position) {
+            const cursor_pos = current_view?.state.doc.line(
+                cursor_position.Line,
+            ).from;
+            dispatch_data.selection = {
+                anchor: cursor_pos,
+                head: cursor_pos,
+            };
+        } else {
+            report_error("Not supported.");
+        }
         // If a scroll position is provided, use it; otherwise, scroll the
         // cursor into the current view.
         if (scroll_line == undefined) {
@@ -1222,7 +1232,7 @@ export const set_CodeMirror_positions = (
             current_view.state.selection.main.from,
         ).number;
     }
-    update_message_contents.cursor_position = cursor_line;
+    update_message_contents.cursor_position = { Line: cursor_line };
 
     // `current_view.viewport.from` isn't accurate, since it's not really the
     // top line, but a margin before it; see the

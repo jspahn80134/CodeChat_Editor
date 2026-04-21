@@ -1181,6 +1181,28 @@ impl TranslationTask {
                         }
                     },
                 };
+
+                // TODO: if the Client's `Update` message contains a
+                // `cursor_position.DomLocation`, translate it to a `Line` using
+                // the following process:
+                //
+                // 1. If this is a Markdown document, there are zero preceding
+                //    newlines and the relevant HTML is in
+                //    `self.code_mirror_doc`. Otherwise:
+                //    1. Locate the relevant doc block, identified by
+                //       `self.code_mirror_doc_blocks.from ==
+                //       cursor_position.DomLocation.from`.
+                //    2. Count all newlines in `self.code_mirror_doc` which
+                //       precede `cursor_position.DomLocation.from`
+                // 2. Create a temporary one-element `Vec<CodeDocBlock>`,
+                //    containing only the doc block / HTML just identified.
+                // 3. Invoke `processing::doc_block_html_to_markdown` on this
+                //    vec, passing `cursor_position.DomLocation.dom_offsets` to
+                //    insert a marker character.
+                // 4. Count the number of newlines before the marker. Add this
+                //    to the number of preceding newlines for a final
+                //    `cursor_position.Line` value.
+
                 debug!("Sending update id = {}", client_message.id);
                 queue_send_func!(self.to_ide_tx.send(EditorMessage {
                     id: client_message.id,
