@@ -1062,13 +1062,43 @@ fn html_to_tree(
     .read_from(&mut html.as_bytes())?;
 
     if let Some(dom_offsets) = dom_offsets {
-        // TODO: each element in `dom_offsets` is the index of a node in the
+        // Each element in `dom_offsets` is the index of a node in the
         // `dom`. Take the first index, then descend into the indicated node.
         // Repeat this process until the last node, which should be a text node.
         // The last index is the offset with the text contents to insert a
         // `UNICODE_CURSOR_MARKER` character. Any failures (index exceeds number
-        // of nodes, etc.) should use an approximation where possible (use the
-        // last node).
+        // of nodes, etc.) use an approximation where possible.
+        let mut current_node = dom.document.clone();
+        let last_idx = dom_offsets.len().saturating_sub(1);
+        'outer: for (i, &offset) in dom_offsets.iter().enumerate() {
+            if i == last_idx {
+                // Insert the cursor marker at the given character offset within
+                // the text node.
+                if let NodeData::Text { contents } = &current_node.data {
+                    let mut text = contents.borrow().to_string();
+                    // Convert the character offset into a byte offset.
+                    let byte_offset = text
+                        .char_indices()
+                        .nth(offset)
+                        .map(|(b, _)| b)
+                        .unwrap_or(text.len());
+                    text.insert(byte_offset, UNICODE_CURSOR_MARKER);
+                    *contents.borrow_mut() = text.into();
+                }
+            } else {
+                let next_node = {
+                    let children = current_node.children.borrow();
+                    if offset < children.len() {
+                        children[offset].clone()
+                    } else if let Some(last) = children.last() {
+                        last.clone()
+                    } else {
+                        break 'outer;
+                    }
+                };
+                current_node = next_node;
+            }
+        }
     }
 
     Ok(dom.document)
