@@ -1,4 +1,4 @@
-// Copyright (C) 2025 Bryan A. Jones.
+﻿// Copyright (C) 2025 Bryan A. Jones.
 //
 // This file is part of the CodeChat Editor. The CodeChat Editor is free
 // software: you can redistribute it and/or modify it under the terms of the GNU
@@ -221,20 +221,20 @@ use tokio::{
 
 // ### Local
 use crate::{
-    lexer::supported_languages::MARKDOWN_MODE,
+    lexer::{CodeDocBlock, DocBlock, supported_languages::MARKDOWN_MODE},
     processing::{
         CodeChatForWeb, CodeMirror, CodeMirrorDiff, CodeMirrorDiffable, CodeMirrorDocBlock,
-        CodeMirrorDocBlockVec, SourceFileMetadata, TranslationResultsString,
-        codechat_for_web_to_source, diff_code_mirror_doc_blocks, diff_str,
-        source_to_codechat_for_web_string, transform_html,
+        CodeMirrorDocBlockVec, SourceFileMetadata, TranslationResultsString, UNICODE_CURSOR_MARKER,
+        byte_index_of, codechat_for_web_to_source, diff_code_mirror_doc_blocks, diff_str,
+        doc_block_html_to_markdown, source_to_codechat_for_web_string, transform_html,
     },
     queue_send, queue_send_func,
     webserver::{
-        EditorMessage, EditorMessageContents, INITIAL_MESSAGE_ID, MESSAGE_ID_INCREMENT,
-        ProcessingTaskHttpRequest, ProcessingTaskHttpRequestFlags, ResultErrTypes, ResultOkTypes,
-        SimpleHttpResponse, SimpleHttpResponseError, UpdateMessageContents, WebAppState,
-        WebsocketQueues, file_to_response, path_to_url, send_response, try_canonicalize,
-        try_read_as_text, url_to_path,
+        CursorPosition, EditorMessage, EditorMessageContents, INITIAL_MESSAGE_ID,
+        MESSAGE_ID_INCREMENT, ProcessingTaskHttpRequest, ProcessingTaskHttpRequestFlags,
+        ResultErrTypes, ResultOkTypes, SimpleHttpResponse, SimpleHttpResponseError,
+        UpdateMessageContents, WebAppState, WebsocketQueues, file_to_response, path_to_url,
+        send_response, try_canonicalize, try_read_as_text, url_to_path,
     },
 };
 
@@ -1182,45 +1182,110 @@ impl TranslationTask {
                     },
                 };
 
-                // TODO: if the Client's `Update` message contains a
-                // `cursor_position.DomLocation`, translate it to a `Line` using
-                // the following process:
-                //
-                // 1. If this is a Markdown document, there are zero preceding
-                //    newlines and the relevant HTML is in
-                //    `self.code_mirror_doc`. Otherwise:
-                //    1. Locate the relevant doc block, identified by
-                //       `self.code_mirror_doc_blocks.from ==
-                //       cursor_position.DomLocation.from`. If not found, abort
-                //       and return `None` for the cursor position.
-                //    2. Count all newlines in `self.code_mirror_doc` which
-                //       precede `cursor_position.DomLocation.from`. To do so,
-                //       translate the `from` location (in UTF-16 code units) to
-                //       bytes using `processing::byte_index_of`.
-                // 2. Create a temporary one-element `Vec<CodeDocBlock>`,
-                //    containing only the doc block / HTML (with empty values
-                //    for `indent` and `delimiter` for the HTML case) just
-                //    identified.
-                // 3. Invoke `processing::doc_block_html_to_markdown` on this
-                //    vec, passing `cursor_position.DomLocation.dom_offsets` to
-                //    insert a marker character.
-                // 4. Count the number of newlines before the marker in the doc
-                //    block's `DocBlock::contents`. Add this to the number of
-                //    preceding newlines for a final `cursor_position.Line`
-                //    value, assuming line 1 is the first line in the file
-                //    (which matches CodeMirror's convention). Do this even if
-                //    the marker already exists in the string; this will at
-                //    least help the user understand where an odd character
-                //    resides, if the original marker precedes the inserted
-                //    marker. If the marker wasn't found, then report the
-                //    newlines before the marker as 0.
+                // Translate the cursor position from `DomLocation` (the
+                // Client's DOM-based coordinate) to `Line` (the IDE's
+                // line-number coordinate) before forwarding to the IDE, which
+                // only understands line numbers.
+                let cursor_position =
+                    if let Some(CursorPosition::DomLocation { from, dom_offsets }) =
+                        update_message_contents.cursor_position
+                    {
+                        // Use a closure to allow early returns on error (returning
+                        // `None` so the IDE receives no cursor position).
+                        (|| {
+                            // Detect Markdown mode: Markdown documents store all
+                            // HTML in `code_mirror_doc` with an empty doc-blocks
+                            // list; CodeChat documents have non-empty doc blocks.
+                            // We can't rely on the lexer name in
+                            // `CodeChatForWeb::SourceFileMetaData`, since the
+                            // message `contents` may be None.
+                            let is_markdown = self
+                                .code_mirror_doc_blocks
+                                .as_ref()
+                                .is_none_or(|v| v.is_empty());
+
+                            // 1. Find the HTML (for a Markdown document) or the doc
+                            //    block the cursor is in. Create a temporary
+                            //    one-element `Vec<CodeDocBlock>` from this.
+                            //    containing only the doc block identified above.
+                            let (preceding_newlines, doc_block) = if is_markdown {
+                                // 1. For Markdown, there are zero preceding
+                                //    newlines and the relevant HTML is in
+                                //    `self.code_mirror_doc`.
+                                (
+                                    0usize,
+                                    DocBlock {
+                                        indent: String::new(),
+                                        delimiter: String::new(),
+                                        contents: self.code_mirror_doc.clone(),
+                                        lines: 0,
+                                    },
+                                )
+                            } else {
+                                // 1. Locate the relevant doc block, identified by
+                                //    its starting offset matching `from`. If not
+                                //    found, abort and return `None`.
+                                let blocks = self.code_mirror_doc_blocks.as_ref().unwrap();
+                                let block = blocks.iter().find(|b| b.from == from)?;
+
+                                // 2. Count all newlines in `self.code_mirror_doc`
+                                //    which precede `from`. `from` is in UTF-16 code
+                                //    units; convert to a byte index first.
+                                let byte_idx = byte_index_of(&self.code_mirror_doc, from);
+                                let preceding_newlines = self.code_mirror_doc[..byte_idx]
+                                    .chars()
+                                    .filter(|&c| c == '\n')
+                                    .count();
+
+                                (
+                                    preceding_newlines,
+                                    DocBlock {
+                                        indent: block.indent.clone(),
+                                        delimiter: block.delimiter.clone(),
+                                        contents: block.contents.clone(),
+                                        lines: 0,
+                                    },
+                                )
+                            };
+
+                            // 2. Insert a `UNICODE_CURSOR_MARKER` at the cursor
+                            //    location specified by `dom_offsets`, then convert
+                            //    the HTML to Markdown.
+                            let translated = doc_block_html_to_markdown(
+                                vec![CodeDocBlock::DocBlock(doc_block)],
+                                &Some(dom_offsets),
+                            )
+                            .ok()?;
+                            let CodeDocBlock::DocBlock(db) = &translated[0] else {
+                                return None;
+                            };
+
+                            // 3. Count newlines before the marker and add them to
+                            //    the preceding-newlines total for the final line
+                            //    number. If the marker is absent, treat its
+                            //    position as 0 (contributing zero newlines), even
+                            //    if an existing marker precedes the inserted one.
+                            let marker_byte = db.contents.find(UNICODE_CURSOR_MARKER).unwrap_or(0);
+                            let newlines_before_marker = db.contents[..marker_byte]
+                                .chars()
+                                .filter(|&c| c == '\n')
+                                .count();
+
+                            // CodeMirror uses 1-based line numbers.
+                            Some(CursorPosition::Line(
+                                (preceding_newlines + newlines_before_marker + 1) as u32,
+                            ))
+                        })()
+                    } else {
+                        update_message_contents.cursor_position
+                    };
 
                 debug!("Sending update id = {}", client_message.id);
                 queue_send_func!(self.to_ide_tx.send(EditorMessage {
                     id: client_message.id,
                     message: EditorMessageContents::Update(UpdateMessageContents {
                         file_path: clean_file_path.to_str().expect("Since the path started as a string, assume it losslessly translates back to a string.").to_string(),
-                        cursor_position: update_message_contents.cursor_position,
+                        cursor_position,
                         scroll_position: update_message_contents.scroll_position,
                         is_re_translation: false,
                         contents: codechat_for_web,
