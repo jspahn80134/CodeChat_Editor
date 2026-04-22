@@ -457,7 +457,7 @@ pub fn codechat_for_web_to_source(
 
 /// Return the byte index of `s[utf_16_index]`, where the indexing operation is
 /// in UTF-16 code units.
-fn byte_index_of(s: &str, utf_16_index: usize) -> usize {
+pub fn byte_index_of(s: &str, utf_16_index: usize) -> usize {
     let mut byte_index = 0;
     let mut current_index = 0;
     for c in s.chars() {
@@ -597,7 +597,7 @@ impl HtmlToMarkdownWrapped {
 }
 
 // Transform HTML in doc blocks to Markdown.
-fn doc_block_html_to_markdown(
+pub fn doc_block_html_to_markdown(
     mut code_doc_block_vec: Vec<CodeDocBlock>,
     // If provided, the index of each successive node in the DOM, ending with
     // the offset within the last node (which must be a text node), at which a

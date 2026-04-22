@@ -1193,15 +1193,24 @@ impl TranslationTask {
                 //       `self.code_mirror_doc_blocks.from ==
                 //       cursor_position.DomLocation.from`.
                 //    2. Count all newlines in `self.code_mirror_doc` which
-                //       precede `cursor_position.DomLocation.from`
+                //       precede `cursor_position.DomLocation.from`. Translate
+                //       the `from` location (in UTF-16 code units) to bytes
+                //       using `processing::byte_index_of`.
                 // 2. Create a temporary one-element `Vec<CodeDocBlock>`,
-                //    containing only the doc block / HTML just identified.
+                //    containing only the doc block / HTML (with empty values
+                //    for `indent` and `delimiter`) just identified.
                 // 3. Invoke `processing::doc_block_html_to_markdown` on this
                 //    vec, passing `cursor_position.DomLocation.dom_offsets` to
                 //    insert a marker character.
-                // 4. Count the number of newlines before the marker. Add this
-                //    to the number of preceding newlines for a final
-                //    `cursor_position.Line` value.
+                // 4. Count the number of newlines before the marker in the doc
+                //    block's `DocBlock::contents`. Add this to the number of
+                //    preceding newlines for a final `cursor_position.Line`
+                //    value, assuming line 1 is the first line in the file
+                //    (which matches CodeMirror's convention). Do this even if
+                //    the marker already exists in the string; this will at
+                //    least help the user understand where an odd character
+                //    resides, if the original marker precedes the inserted
+                //    marker.
 
                 debug!("Sending update id = {}", client_message.id);
                 queue_send_func!(self.to_ide_tx.send(EditorMessage {
