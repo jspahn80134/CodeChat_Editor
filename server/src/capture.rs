@@ -14,57 +14,57 @@
 // the CodeChat Editor. If not, see
 // [http://www.gnu.org/licenses](http://www.gnu.org/licenses).
 
-/// `capture.rs` -- Capture CodeChat Editor Events
-/// ============================================================================
-///
-/// This module provides an asynchronous event capture facility backed by a
-/// PostgreSQL database. It is designed to support the dissertation study by
-/// recording process-level data such as:
-///
-/// * Frequency and timing of writing entries
-/// * Edits to documentation and code
-/// * Switches between documentation and coding activity
-/// * Duration of engagement with reflective writing
-/// * Save, compile, and run events
-///
-/// Events are sent from the client (browser and/or VS Code extension) to the
-/// server as JSON. The server enqueues events into an asynchronous worker which
-/// performs batched inserts into the `events` table.
-///
-/// Database schema
-/// ----------------------------------------------------------------------------
-///
-/// The following SQL statement creates the `events` table used by this module:
-///
-/// ```sql
-/// CREATE TABLE events (
-///     id            SERIAL PRIMARY KEY,
-///     user_id       TEXT NOT NULL,
-///     assignment_id TEXT,
-///     group_id      TEXT,
-///     file_path     TEXT,
-///     event_type    TEXT NOT NULL,
-///     timestamp     TEXT NOT NULL,
-///     data          TEXT
-/// );
-/// ```
-/// New comment
-/// * `user_id` – participant identifier (student id, pseudonym, etc.).
-/// * `assignment_id` – logical assignment / lab identifier.
-/// * `group_id` – optional grouping (treatment / comparison, section).
-/// * `file_path` – logical path of the file being edited.
-/// * `event_type` – coarse event type (see `event_type` constants below).
-/// * `timestamp` – RFC3339 timestamp (in UTC).
-/// * `data` – JSON payload with event-specific details.
+// `capture.rs` -- Capture CodeChat Editor Events
+// ============================================================================
+//
+// This module provides an asynchronous event capture facility backed by a
+// PostgreSQL database. It is designed to support the dissertation study by
+// recording process-level data such as:
+//
+// * Frequency and timing of writing entries
+// * Edits to documentation and code
+// * Switches between documentation and coding activity
+// * Duration of engagement with reflective writing
+// * Save, compile, and run events
+//
+// Events are sent from the client (browser and/or VS Code extension) to the
+// server as JSON. The server enqueues events into an asynchronous worker which
+// performs batched inserts into the `events` table.
+//
+// Database schema
+// ----------------------------------------------------------------------------
+//
+// The following SQL statement creates the `events` table used by this module:
+//
+// ```sql
+// CREATE TABLE events (
+//     id            SERIAL PRIMARY KEY,
+//     user_id       TEXT NOT NULL,
+//     assignment_id TEXT,
+//     group_id      TEXT,
+//     file_path     TEXT,
+//     event_type    TEXT NOT NULL,
+//     timestamp     TEXT NOT NULL,
+//     data          TEXT
+// );
+// ```
+//
+// * `user_id` – participant identifier (student id, pseudonym, etc.).
+// * `assignment_id` – logical assignment / lab identifier.
+// * `group_id` – optional grouping (treatment / comparison, section).
+// * `file_path` – logical path of the file being edited.
+// * `event_type` – coarse event type (see `event_type` constants below).
+// * `timestamp` – RFC3339 timestamp (in UTC).
+// * `data` – JSON payload with event-specific details.
 
 use std::{io, thread};
 
 use chrono::{DateTime, Utc};
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
+use std::error::Error;
 use tokio::sync::mpsc;
 use tokio_postgres::{Client, NoTls};
-use std::error::Error;
 
 /// Canonical event type strings. Keep these stable for analysis.
 pub mod event_types {
@@ -273,11 +273,7 @@ impl EventCapture {
     pub fn log(&self, event: CaptureEvent) {
         debug!(
             "Capture: queueing event: type={}, user_id={}, assignment_id={:?}, group_id={:?}, file_path={:?}",
-            event.event_type,
-            event.user_id,
-            event.assignment_id,
-            event.group_id,
-            event.file_path
+            event.event_type, event.user_id, event.assignment_id, event.group_id, event.file_path
         );
 
         if let Err(err) = self.tx.send(event) {
@@ -324,8 +320,6 @@ fn log_pg_connect_error(context: &str, err: &tokio_postgres::Error) {
     // Fallback: log once (Display)
     error!("{context}: {err}");
 }
-
-
 
 /// Insert a single event into the `events` table.
 async fn insert_event(client: &Client, event: &CaptureEvent) -> Result<u64, tokio_postgres::Error> {
@@ -470,7 +464,6 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn event_capture_inserts_event_into_db() -> Result<(), Box<dyn std::error::Error>> {
-
         // Initialize logging for this test, using the same log4rs.yml as the
         // server. If logging is already initialized, this will just return an
         // error which we ignore.
@@ -541,7 +534,10 @@ mod tests {
                     ($1, NULL, NULL, NULL, 'test_event', $2, '{"test":true}')
                 RETURNING id
                 "#,
-                &[&test_user_id, &format!("{:?}", std::time::SystemTime::now())],
+                &[
+                    &test_user_id,
+                    &format!("{:?}", std::time::SystemTime::now()),
+                ],
             )
             .await?;
 
@@ -568,7 +564,7 @@ mod tests {
 
         // 6. Wait (deterministically) for the background worker to insert the event,
         // then fetch THAT row (instead of "latest row in the table").
-        use tokio::time::{sleep, Duration, Instant};
+        use tokio::time::{Duration, Instant, sleep};
 
         let deadline = Instant::now() + Duration::from_secs(2);
 
