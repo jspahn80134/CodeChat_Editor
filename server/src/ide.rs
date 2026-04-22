@@ -237,6 +237,14 @@ impl CodeChatEditorServer {
         .await
     }
 
+    pub async fn send_capture_event(
+        &self,
+        capture_event: webserver::CaptureEventWire,
+    ) -> std::io::Result<f64> {
+        self.send_message_timeout(EditorMessageContents::Capture(capture_event))
+            .await
+    }
+
     // Send a `CurrentFile` message. The other parameter (true if text/false if
     // binary/None if ignored) is ignored by the server, so it's always sent as
     // `None`.

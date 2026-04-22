@@ -22,4 +22,7 @@
 # dist build output
 target/
 
+# The runtime capture config is resolved from the repository root.
+server/capture_config.json
+
 # CodeChat Editor lexer: python. See TODO.

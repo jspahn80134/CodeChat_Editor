@@ -48,7 +48,7 @@
 ///     data          TEXT
 /// );
 /// ```
-///
+/// New comment
 /// * `user_id` – participant identifier (student id, pseudonym, etc.).
 /// * `assignment_id` – logical assignment / lab identifier.
 /// * `group_id` – optional grouping (treatment / comparison, section).

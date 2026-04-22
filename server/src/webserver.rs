@@ -42,9 +42,9 @@ use actix_web::{
     App, HttpRequest, HttpResponse, HttpServer,
     dev::{Server, ServerHandle, ServiceFactory, ServiceRequest},
     error::Error,
-    get, post,
+    get,
     http::header::{ContentType, DispositionType},
-    middleware,
+    middleware, post,
     web::{self, Data},
 };
 
@@ -95,7 +95,7 @@ use crate::{
     },
 };
 
-use crate::capture::{EventCapture, CaptureConfig, CaptureEvent};
+use crate::capture::{CaptureConfig, CaptureEvent, EventCapture};
 
 use chrono::Utc;
 
@@ -204,6 +204,8 @@ pub enum EditorMessageContents {
         // Server will determine the value if needed.
         Option<bool>,
     ),
+    /// Record an instrumentation event. Valid destinations: Server.
+    Capture(CaptureEventWire),
 
     // #### These messages may only be sent by the IDE.
     /// This is the first message sent when the IDE starts up. It may only be
@@ -385,7 +387,7 @@ pub struct AppState {
     /// The auth credentials if authentication is used.
     credentials: Option<Credentials>,
     // Added to support capture - JDS - 11/2025
-    pub capture: Option<EventCapture>,    
+    pub capture: Option<EventCapture>,
 }
 
 pub type WebAppState = web::Data<AppState>;
@@ -399,24 +401,31 @@ pub struct Credentials {
 /// JSON payload received from clients for capture events.
 ///
 /// The server will supply the timestamp; clients do not need to send it.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, TS)]
+#[ts(export, optional_fields)]
 pub struct CaptureEventWire {
     pub user_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub assignment_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub group_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub file_path: Option<String>,
     pub event_type: String,
 
     /// Optional client-side timestamp (milliseconds since Unix epoch).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub client_timestamp_ms: Option<i64>,
 
     /// Optional client timezone offset in minutes (JS Date().getTimezoneOffset()).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub client_tz_offset_min: Option<i32>,
 
     /// Arbitrary event-specific data stored as JSON (optional).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(type = "unknown")]
     pub data: Option<serde_json::Value>,
 }
-
 
 // Macros
 // -----------------------------------------------------------------------------
@@ -606,44 +615,45 @@ async fn capture_endpoint(
     app_state: WebAppState,
     payload: web::Json<CaptureEventWire>,
 ) -> HttpResponse {
-    let wire = payload.into_inner();
-
- if let Some(capture) = &app_state.capture {
-    // Default missing data to empty object
-    let mut data = wire.data.unwrap_or_else(|| serde_json::json!({}));
-
-    // Ensure data is an object so we can attach fields
-    if !data.is_object() {
-        data = serde_json::json!({ "value": data });
-    }
-
-    // Add client timestamp fields if present (even if extension also sends them;
-    // overwriting is fine and consistent).
-    if let serde_json::Value::Object(map) = &mut data {
-        if let Some(ms) = wire.client_timestamp_ms {
-            map.insert("client_timestamp_ms".to_string(), serde_json::json!(ms));
-        }
-        if let Some(tz) = wire.client_tz_offset_min {
-            map.insert("client_tz_offset_min".to_string(), serde_json::json!(tz));
-        }
-    }
-
-    let event = CaptureEvent {
-        user_id: wire.user_id,
-        assignment_id: wire.assignment_id,
-        group_id: wire.group_id,
-        file_path: wire.file_path,
-        event_type: wire.event_type,
-        // Server decides when the event is recorded.
-        timestamp: Utc::now(),
-        data,
-    };
-
-    capture.log(event);
+    log_capture_event(&app_state, payload.into_inner());
+    HttpResponse::Ok().finish()
 }
 
+/// Log a capture event if capture is enabled.
+pub fn log_capture_event(app_state: &WebAppState, wire: CaptureEventWire) {
+    if let Some(capture) = &app_state.capture {
+        // Default missing data to empty object
+        let mut data = wire.data.unwrap_or_else(|| serde_json::json!({}));
 
-    HttpResponse::Ok().finish()
+        // Ensure data is an object so we can attach fields
+        if !data.is_object() {
+            data = serde_json::json!({ "value": data });
+        }
+
+        // Add client timestamp fields if present (even if extension also sends them;
+        // overwriting is fine and consistent).
+        if let serde_json::Value::Object(map) = &mut data {
+            if let Some(ms) = wire.client_timestamp_ms {
+                map.insert("client_timestamp_ms".to_string(), serde_json::json!(ms));
+            }
+            if let Some(tz) = wire.client_tz_offset_min {
+                map.insert("client_tz_offset_min".to_string(), serde_json::json!(tz));
+            }
+        }
+
+        let event = CaptureEvent {
+            user_id: wire.user_id,
+            assignment_id: wire.assignment_id,
+            group_id: wire.group_id,
+            file_path: wire.file_path,
+            event_type: wire.event_type,
+            // Server decides when the event is recorded.
+            timestamp: Utc::now(),
+            data,
+        };
+
+        capture.log(event);
+    }
 }
 
 // Get the `mode` query parameter to determine `is_test_mode`; default to
@@ -1489,7 +1499,6 @@ pub fn setup_server(
     addr: &SocketAddr,
     credentials: Option<Credentials>,
 ) -> std::io::Result<(Server, Data<AppState>)> {
-
     // Pre-load the bundled files before starting the webserver.
     let _ = &*BUNDLED_FILES_MAP;
     let app_data = make_app_data(credentials);
@@ -1576,26 +1585,22 @@ pub fn make_app_data(credentials: Option<Credentials>) -> WebAppState {
         config_path.push("capture_config.json");
 
         match fs::read_to_string(&config_path) {
-            Ok(json) => {
-                match serde_json::from_str::<CaptureConfig>(&json) {
-                    Ok(cfg) => match EventCapture::new(cfg) {
-                        Ok(ec) => {
-                            eprintln!("Capture: enabled (config file: {config_path:?})");
-                            Some(ec)
-                        }
-                        Err(err) => {
-                            eprintln!("Capture: failed to initialize from {config_path:?}: {err}");
-                            None
-                        }
-                    },
+            Ok(json) => match serde_json::from_str::<CaptureConfig>(&json) {
+                Ok(cfg) => match EventCapture::new(cfg) {
+                    Ok(ec) => {
+                        eprintln!("Capture: enabled (config file: {config_path:?})");
+                        Some(ec)
+                    }
                     Err(err) => {
-                        eprintln!(
-                            "Capture: invalid JSON in {config_path:?}: {err}"
-                        );
+                        eprintln!("Capture: failed to initialize from {config_path:?}: {err}");
                         None
                     }
+                },
+                Err(err) => {
+                    eprintln!("Capture: invalid JSON in {config_path:?}: {err}");
+                    None
                 }
-            }
+            },
             Err(err) => {
                 eprintln!(
                     "Capture: disabled (config file not found or unreadable: {config_path:?}: {err})"
@@ -1645,7 +1650,7 @@ where
         .service(vscode_client_framework)
         .service(ping)
         .service(stop)
-        .service(capture_endpoint)        
+        .service(capture_endpoint)
         // Reroute to the filewatcher filesystem for typical user-requested
         // URLs.
         .route("/", web::get().to(filewatcher_root_fs_redirect))

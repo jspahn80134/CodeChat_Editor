@@ -221,6 +221,7 @@ use tokio::{
 
 // ### Local
 use crate::{
+    capture::event_types,
     lexer::supported_languages::MARKDOWN_MODE,
     processing::{
         CodeChatForWeb, CodeMirror, CodeMirrorDiff, CodeMirrorDiffable, CodeMirrorDocBlock,
@@ -230,11 +231,11 @@ use crate::{
     },
     queue_send, queue_send_func,
     webserver::{
-        EditorMessage, EditorMessageContents, INITIAL_MESSAGE_ID, MESSAGE_ID_INCREMENT,
-        ProcessingTaskHttpRequest, ProcessingTaskHttpRequestFlags, ResultErrTypes, ResultOkTypes,
-        SimpleHttpResponse, SimpleHttpResponseError, UpdateMessageContents, WebAppState,
-        WebsocketQueues, file_to_response, path_to_url, send_response, try_canonicalize,
-        try_read_as_text, url_to_path,
+        CaptureEventWire, EditorMessage, EditorMessageContents, INITIAL_MESSAGE_ID,
+        MESSAGE_ID_INCREMENT, ProcessingTaskHttpRequest, ProcessingTaskHttpRequestFlags,
+        ResultErrTypes, ResultOkTypes, SimpleHttpResponse, SimpleHttpResponseError,
+        UpdateMessageContents, WebAppState, WebsocketQueues, file_to_response, log_capture_event,
+        path_to_url, send_response, try_canonicalize, try_read_as_text, url_to_path,
     },
 };
 
@@ -384,6 +385,7 @@ pub fn create_translation_queues(
 /// allows factoring out lengthy contents in the loop into subfunctions.
 struct TranslationTask {
     // These parameters are passed to us.
+    app_state: WebAppState,
     connection_id_raw: String,
     prefix: &'static [&'static str],
     allow_source_diffs: bool,
@@ -432,6 +434,69 @@ struct TranslationTask {
     /// Has the full (non-diff) version of the current file been sent? Don't
     /// send diffs until this is sent.
     sent_full: bool,
+    capture_context: CaptureContext,
+}
+
+#[derive(Clone, Debug, Default)]
+struct CaptureContext {
+    user_id: Option<String>,
+    assignment_id: Option<String>,
+    group_id: Option<String>,
+    session_id: Option<String>,
+    client_tz_offset_min: Option<i32>,
+}
+
+impl CaptureContext {
+    fn update_from_wire(&mut self, wire: &CaptureEventWire) {
+        if !wire.user_id.trim().is_empty() {
+            self.user_id = Some(wire.user_id.clone());
+        }
+        if let Some(assignment_id) = &wire.assignment_id {
+            self.assignment_id = Some(assignment_id.clone());
+        }
+        if let Some(group_id) = &wire.group_id {
+            self.group_id = Some(group_id.clone());
+        }
+        if let Some(client_tz_offset_min) = wire.client_tz_offset_min {
+            self.client_tz_offset_min = Some(client_tz_offset_min);
+        }
+        if let Some(serde_json::Value::Object(data)) = &wire.data
+            && let Some(session_id) = data.get("session_id").and_then(serde_json::Value::as_str)
+        {
+            self.session_id = Some(session_id.to_string());
+        }
+    }
+
+    fn capture_event(
+        &self,
+        event_type: &str,
+        file_path: Option<String>,
+        data: serde_json::Value,
+    ) -> Option<CaptureEventWire> {
+        let mut data = match data {
+            serde_json::Value::Object(map) => map,
+            other => {
+                let mut map = serde_json::Map::new();
+                map.insert("value".to_string(), other);
+                map
+            }
+        };
+        if let Some(session_id) = &self.session_id {
+            data.entry("session_id".to_string())
+                .or_insert_with(|| serde_json::json!(session_id));
+        }
+
+        Some(CaptureEventWire {
+            user_id: self.user_id.clone()?,
+            assignment_id: self.assignment_id.clone(),
+            group_id: self.group_id.clone(),
+            file_path,
+            event_type: event_type.to_string(),
+            client_timestamp_ms: None,
+            client_tz_offset_min: self.client_tz_offset_min,
+            data: Some(serde_json::Value::Object(data)),
+        })
+    }
 }
 
 /// This is the processing task for the Visual Studio Code IDE. It handles all
@@ -463,6 +528,7 @@ pub async fn translation_task(
 
         let mut continue_loop = true;
         let mut tt = TranslationTask {
+            app_state: app_state.clone(),
             connection_id_raw,
             prefix,
             allow_source_diffs,
@@ -486,6 +552,7 @@ pub async fn translation_task(
             version: 0.0,
             // Don't send diffs until this is sent.
             sent_full: false,
+            capture_context: CaptureContext::default(),
         };
         while continue_loop {
             select! {
@@ -512,6 +579,11 @@ pub async fn translation_task(
 
                         EditorMessageContents::Result(_) => continue_loop = tt.ide_result(ide_message).await,
                         EditorMessageContents::Update(_) => continue_loop = tt.ide_update(ide_message).await,
+                        EditorMessageContents::Capture(capture_event) => {
+                            tt.capture_context.update_from_wire(&capture_event);
+                            log_capture_event(&app_state, capture_event);
+                            send_response(&tt.to_ide_tx, ide_message.id, Ok(ResultOkTypes::Void)).await;
+                        },
 
                         // Update the current file; translate it to a URL then
                         // pass it to the Client.
@@ -607,6 +679,11 @@ pub async fn translation_task(
                         },
 
                         EditorMessageContents::Update(_) => continue_loop = tt.client_update(client_message).await,
+                        EditorMessageContents::Capture(capture_event) => {
+                            tt.capture_context.update_from_wire(&capture_event);
+                            log_capture_event(&app_state, capture_event);
+                            send_response(&tt.to_client_tx, client_message.id, Ok(ResultOkTypes::Void)).await;
+                        },
 
                         // Update the current file; translate it to a URL then
                         // pass it to the IDE.
@@ -697,6 +774,103 @@ pub async fn translation_task(
 
 // These provide translation for messages passing through the Server.
 impl TranslationTask {
+    fn capture_file_path(file_path: &std::path::Path) -> Option<String> {
+        file_path.to_str().map(str::to_string)
+    }
+
+    fn log_server_capture_event(
+        &self,
+        event_type: &str,
+        file_path: &std::path::Path,
+        data: serde_json::Value,
+    ) {
+        let Some(capture_event) = self.capture_context.capture_event(
+            event_type,
+            Self::capture_file_path(file_path),
+            data,
+        ) else {
+            debug!("Skipping server-classified capture event; capture identity is not known yet.");
+            return;
+        };
+        log_capture_event(&self.app_state, capture_event);
+    }
+
+    fn log_raw_write_event(&self, file_path: &std::path::Path, before: &str, after: &str) {
+        if before == after {
+            return;
+        }
+        self.log_server_capture_event(
+            event_types::WRITE_CODE,
+            file_path,
+            serde_json::json!({
+                "source": "server_translation",
+                "classification_basis": "raw_text",
+                "diff": diff_str(before, after),
+            }),
+        );
+    }
+
+    fn log_code_mirror_write_events(
+        &self,
+        file_path: &std::path::Path,
+        metadata: &SourceFileMetadata,
+        before_doc: &str,
+        before_doc_blocks: Option<&CodeMirrorDocBlockVec>,
+        after: &CodeMirror,
+        source: &str,
+    ) {
+        if metadata.mode == MARKDOWN_MODE {
+            if !compare_html(before_doc, &after.doc) {
+                self.log_server_capture_event(
+                    event_types::WRITE_DOC,
+                    file_path,
+                    serde_json::json!({
+                        "source": source,
+                        "classification_basis": "markdown_document",
+                        "mode": metadata.mode,
+                        "diff": diff_str(before_doc, &after.doc),
+                    }),
+                );
+            }
+            return;
+        }
+
+        if before_doc != after.doc {
+            self.log_server_capture_event(
+                event_types::WRITE_CODE,
+                file_path,
+                serde_json::json!({
+                    "source": source,
+                    "classification_basis": "codemirror_code_text",
+                    "mode": metadata.mode,
+                    "diff": diff_str(before_doc, &after.doc),
+                }),
+            );
+        }
+
+        let doc_blocks_changed = match before_doc_blocks {
+            Some(before) => !doc_block_compare(before, &after.doc_blocks),
+            None => !after.doc_blocks.is_empty(),
+        };
+        if doc_blocks_changed {
+            let doc_block_diff = before_doc_blocks.map(|before| {
+                serde_json::json!(diff_code_mirror_doc_blocks(before, &after.doc_blocks))
+            });
+            self.log_server_capture_event(
+                event_types::WRITE_DOC,
+                file_path,
+                serde_json::json!({
+                    "source": source,
+                    "classification_basis": "codemirror_doc_blocks",
+                    "mode": metadata.mode,
+                    "doc_block_count_before": before_doc_blocks.map_or(0, Vec::len),
+                    "doc_block_count_after": after.doc_blocks.len(),
+                    "doc_block_diff": doc_block_diff,
+                }),
+            );
+        }
+    }
+
     // Pass a `Result` message to the Client, unless it's a `LoadFile` result.
     async fn ide_result(&mut self, ide_message: EditorMessage) -> bool {
         let EditorMessageContents::Result(ref result) = ide_message.message else {
@@ -892,6 +1066,16 @@ impl TranslationTask {
                                                 else {
                                                     panic!("Unexpected diff value.");
                                                 };
+                                                if self.sent_full {
+                                                    self.log_code_mirror_write_events(
+                                                        &clean_file_path,
+                                                        &ccfw.metadata,
+                                                        &self.code_mirror_doc,
+                                                        self.code_mirror_doc_blocks.as_ref(),
+                                                        code_mirror_translated,
+                                                        "ide",
+                                                    );
+                                                }
                                                 // Send a diff if possible.
                                                 let client_contents = if self.sent_full {
                                                     self.diff_code_mirror(
@@ -937,6 +1121,13 @@ impl TranslationTask {
                                                 Err(ResultErrTypes::TodoBinarySupport)
                                             }
                                             TranslationResultsString::Unknown => {
+                                                if self.sent_full {
+                                                    self.log_raw_write_event(
+                                                        &clean_file_path,
+                                                        &self.source_code,
+                                                        &code_mirror.doc,
+                                                    );
+                                                }
                                                 // Send the new raw contents.
                                                 debug!("Sending translated contents to Client.");
                                                 queue_send_func!(self.to_client_tx.send(EditorMessage {
@@ -953,13 +1144,16 @@ impl TranslationTask {
                                                                 mode: "".to_string(),
                                                             },
                                                             source: CodeMirrorDiffable::Plain(CodeMirror {
-                                                                doc: code_mirror.doc,
+                                                                doc: code_mirror.doc.clone(),
                                                                 doc_blocks: vec![]
                                                             }),
                                                             version: contents.version
                                                         }),
                                                     }),
                                                 }));
+                                                self.source_code = code_mirror.doc;
+                                                self.code_mirror_doc = self.source_code.clone();
+                                                self.code_mirror_doc_blocks = Some(vec![]);
                                                 Ok(ResultOkTypes::Void)
                                             }
                                             TranslationResultsString::Toc(_) => {
@@ -1042,12 +1236,22 @@ impl TranslationTask {
                             // what we just received. This must be updated
                             // before we can translate back to check for changes
                             // (the next step).
-                            let CodeMirrorDiffable::Plain(code_mirror) = cfw.source else {
+                            let CodeMirrorDiffable::Plain(ref code_mirror) = cfw.source else {
                                 // TODO: support diffable!
                                 panic!("Diff not supported.");
                             };
-                            self.code_mirror_doc = code_mirror.doc;
-                            self.code_mirror_doc_blocks = Some(code_mirror.doc_blocks);
+                            if self.sent_full {
+                                self.log_code_mirror_write_events(
+                                    &clean_file_path,
+                                    &cfw.metadata,
+                                    &self.code_mirror_doc,
+                                    self.code_mirror_doc_blocks.as_ref(),
+                                    code_mirror,
+                                    "client",
+                                );
+                            }
+                            self.code_mirror_doc = code_mirror.doc.clone();
+                            self.code_mirror_doc_blocks = Some(code_mirror.doc_blocks.clone());
                             // We may need to change this version if we send a
                             // diff back to the Client.
                             let mut cfw_version = cfw.version;

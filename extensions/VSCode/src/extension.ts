@@ -180,7 +180,7 @@ function classifyAtPosition(doc: vscode.TextDocument, pos: vscode.Position): Act
 
 
 
-// Types for talking to the Rust /capture endpoint. This mirrors
+// Types for sending capture events to the Rust server. This mirrors
 // `CaptureEventWire` in webserver.rs.
 interface CaptureEventPayload {
     user_id: string;
@@ -188,6 +188,8 @@ interface CaptureEventPayload {
     group_id?: string;
     file_path?: string;
     event_type: string;
+    client_timestamp_ms?: number;
+    client_tz_offset_min?: number;
     data: any; // sent as JSON
 }
 
@@ -214,9 +216,10 @@ const CAPTURE_USER_ID: string = (() => {
 const CAPTURE_ASSIGNMENT_ID = "demo-assignment";
 const CAPTURE_GROUP_ID = "demo-group";
 
-// Base URL for the CodeChat server's /capture endpoint. NOTE: keep this in sync
-// with whatever port your server actually uses.
-const CAPTURE_SERVER_BASE = "http://127.0.0.1:8080";
+let capture_output_channel: vscode.OutputChannel | undefined;
+let captureFailureLogged = false;
+let captureTransportReady = false;
+let extensionCaptureSessionStarted = false;
 
 // Simple classification of what the user is currently doing.
 type ActivityKind = "doc" | "code" | "other";
@@ -249,7 +252,6 @@ function classifyDocument(doc: vscode.TextDocument | undefined): ActivityKind {
 
 // Helper to send a capture event to the Rust server.
 async function sendCaptureEvent(
-    serverBaseUrl: string, // e.g. "http://127.0.0.1:8080"
     eventType: string,
     filePath?: string,
     data: any = {},
@@ -260,33 +262,60 @@ async function sendCaptureEvent(
         group_id: CAPTURE_GROUP_ID,
         file_path: filePath,
         event_type: eventType,
+        client_timestamp_ms: Date.now(),
+        client_tz_offset_min: new Date().getTimezoneOffset(),
         data: {
             ...data,
             session_id: CAPTURE_SESSION_ID,
-            client_timestamp_ms: Date.now(),
-            client_tz_offset_min: new Date().getTimezoneOffset(),
         },
     };
 
-    try {
-        const resp = await fetch(`${serverBaseUrl}/capture`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify(payload),
-        });
-
-        if (!resp.ok) {
-            console.error(
-                "Capture event failed:",
-                resp.status,
-                await resp.text(),
-            );
-        }
-    } catch (err) {
-        console.error("Error sending capture event:", err);
+    if (codeChatEditorServer === undefined) {
+        reportCaptureFailure("CodeChat server is not running");
+        return;
     }
+    if (!captureTransportReady) {
+        capture_output_channel?.appendLine(
+            `${new Date().toISOString()} capture skipped before server handshake: ${JSON.stringify(payload)}`,
+        );
+        return;
+    }
+
+    logCaptureEvent(payload);
+
+    try {
+        await codeChatEditorServer.sendCaptureEvent(JSON.stringify(payload));
+        captureFailureLogged = false;
+    } catch (err) {
+        reportCaptureFailure(err instanceof Error ? err.message : String(err));
+    }
+}
+
+function logCaptureEvent(payload: CaptureEventPayload) {
+    capture_output_channel?.appendLine(
+        `${new Date().toISOString()} ${JSON.stringify(payload)}`,
+    );
+}
+
+function reportCaptureFailure(message: string) {
+    capture_output_channel?.appendLine(
+        `${new Date().toISOString()} capture send failed: ${message}`,
+    );
+    if (captureFailureLogged) {
+        return;
+    }
+    captureFailureLogged = true;
+    console.warn(`CodeChat capture event was not queued: ${message}`);
+}
+
+async function startExtensionCaptureSession(filePath?: string) {
+    if (extensionCaptureSessionStarted) {
+        return;
+    }
+    extensionCaptureSessionStarted = true;
+    await sendCaptureEvent("session_start", filePath, {
+        mode: "vscode_extension",
+    });
 }
 
 // Update activity state, emit switch + doc\_session events as needed.
@@ -298,7 +327,7 @@ function noteActivity(kind: ActivityKind, filePath?: string) {
         if (docSessionStart === null) {
             // Starting a new reflective-writing session.
             docSessionStart = now;
-            void sendCaptureEvent(CAPTURE_SERVER_BASE, "session_start", filePath, {
+            void sendCaptureEvent("session_start", filePath, {
                 mode: "doc",
             });
         }
@@ -307,11 +336,11 @@ function noteActivity(kind: ActivityKind, filePath?: string) {
             // Ending a reflective-writing session.
             const durationMs = now - docSessionStart;
             docSessionStart = null;
-            void sendCaptureEvent(CAPTURE_SERVER_BASE, "doc_session", filePath, {
+            void sendCaptureEvent("doc_session", filePath, {
                 duration_ms: durationMs,
                 duration_seconds: durationMs / 1000.0,
             });
-            void sendCaptureEvent(CAPTURE_SERVER_BASE, "session_end", filePath, {
+            void sendCaptureEvent("session_end", filePath, {
                 mode: "doc",
             });
         }
@@ -320,7 +349,7 @@ function noteActivity(kind: ActivityKind, filePath?: string) {
     // If we switched between doc and code, log a switch\_pane event.
     const docOrCode = (k: ActivityKind) => k === "doc" || k === "code";
     if (docOrCode(lastActivityKind) && docOrCode(kind) && kind !== lastActivityKind) {
-        void sendCaptureEvent(CAPTURE_SERVER_BASE, "switch_pane", filePath, {
+        void sendCaptureEvent("switch_pane", filePath, {
             from: lastActivityKind,
             to: kind,
         });
@@ -335,6 +364,9 @@ function noteActivity(kind: ActivityKind, filePath?: string) {
 // This is invoked when the extension is activated. It either creates a new
 // CodeChat Editor Server instance or reveals the currently running one.
 export const activate = (context: vscode.ExtensionContext) => {
+    capture_output_channel = vscode.window.createOutputChannel("CodeChat Capture");
+    context.subscriptions.push(capture_output_channel);
+
     context.subscriptions.push(
         vscode.commands.registerCommand(
             "extension.codeChatEditorDeactivate",
@@ -344,18 +376,6 @@ export const activate = (context: vscode.ExtensionContext) => {
             "extension.codeChatEditorActivate",
             async () => {
                 console_log("CodeChat Editor extension: starting.");
-
-                // CAPTURE: mark the start of an editor session.
-                const active = vscode.window.activeTextEditor;
-                const startFilePath = active?.document.fileName;
-                void sendCaptureEvent(
-                    CAPTURE_SERVER_BASE,
-                    "session_start",
-                    startFilePath,
-                    {
-                        mode: "vscode_extension",
-                    },
-                );
 
                 if (!subscribed) {
                     subscribed = true;
@@ -379,8 +399,8 @@ export const activate = (context: vscode.ExtensionContext) => {
                                 }, ${format_struct(event.contentChanges)}.`,
                             );
 
-                            // CAPTURE: classify this as documentation vs. code
-                            // and log a write\_\* event.
+                            // CAPTURE: update session/switch state. The server
+                            // classifies write_* events after parsing.
                             const doc = event.document;
 // ```
 //                        const kind = classifyDocument(doc);
@@ -390,31 +410,6 @@ export const activate = (context: vscode.ExtensionContext) => {
                             const kind = classifyAtPosition(doc, pos);
 
                             const filePath = doc.fileName;
-                            const charsTyped = event.contentChanges
-                                .map((c) => c.text.length)
-                                .reduce((a, b) => a + b, 0);
-
-                            if (kind === "doc") {
-                                void sendCaptureEvent(
-                                    CAPTURE_SERVER_BASE,
-                                    "write_doc",
-                                    filePath,
-                                    {
-                                        chars_typed: charsTyped,
-                                        languageId: doc.languageId,
-                                    },
-                                );
-                            } else if (kind === "code") {
-                                void sendCaptureEvent(
-                                    CAPTURE_SERVER_BASE,
-                                    "write_code",
-                                    filePath,
-                                    {
-                                        chars_typed: charsTyped,
-                                        languageId: doc.languageId,
-                                    },
-                                );
-                            }
 
                             // Update our notion of current activity + doc
                             // session.
@@ -489,7 +484,6 @@ export const activate = (context: vscode.ExtensionContext) => {
                             const active = vscode.window.activeTextEditor;
                             const filePath = active?.document.fileName;
                             void sendCaptureEvent(
-                                CAPTURE_SERVER_BASE,
                                 "run_end",
                                 filePath,
                                 {
@@ -507,7 +501,6 @@ export const activate = (context: vscode.ExtensionContext) => {
                             const filePath = active?.document.fileName;
                             const task = e.execution.task;
                             void sendCaptureEvent(
-                                CAPTURE_SERVER_BASE,
                                 "compile_end",
                                 filePath,
                                 {
@@ -523,7 +516,6 @@ export const activate = (context: vscode.ExtensionContext) => {
                     context.subscriptions.push(
                         vscode.workspace.onDidSaveTextDocument((doc) => {
                             void sendCaptureEvent(
-                                CAPTURE_SERVER_BASE,
                                 "save",
                                 doc.fileName,
                                 {
@@ -541,7 +533,6 @@ export const activate = (context: vscode.ExtensionContext) => {
                             const active = vscode.window.activeTextEditor;
                             const filePath = active?.document.fileName;
                             void sendCaptureEvent(
-                                CAPTURE_SERVER_BASE,
                                 "run",
                                 filePath,
                                 {
@@ -559,7 +550,6 @@ export const activate = (context: vscode.ExtensionContext) => {
                             const filePath = active?.document.fileName;
                             const task = e.execution.task;
                             void sendCaptureEvent(
-                                CAPTURE_SERVER_BASE,
                                 "compile",
                                 filePath,
                                 {
@@ -632,6 +622,9 @@ export const activate = (context: vscode.ExtensionContext) => {
                 // Start the server.
                 console_log("CodeChat Editor extension: starting server.");
                 codeChatEditorServer = new CodeChatEditorServer();
+                captureFailureLogged = false;
+                captureTransportReady = false;
+                extensionCaptureSessionStarted = false;
 
                 const hosted_in_ide =
                     codechat_client_location === CodeChatEditorClientLocation.html;
@@ -641,6 +634,9 @@ export const activate = (context: vscode.ExtensionContext) => {
                 await codeChatEditorServer.sendMessageOpened(hosted_in_ide);
 
                 if (codechat_client_location === CodeChatEditorClientLocation.browser) {
+                    captureTransportReady = true;
+                    const active = vscode.window.activeTextEditor;
+                    void startExtensionCaptureSession(active?.document.fileName);
                     send_update(false);
                 }
 
@@ -860,6 +856,9 @@ export const activate = (context: vscode.ExtensionContext) => {
                             assert(webview_panel !== undefined);
                             webview_panel.webview.html = client_html;
                             await sendResult(id);
+                            captureTransportReady = true;
+                            const active = vscode.window.activeTextEditor;
+                            void startExtensionCaptureSession(active?.document.fileName);
                             send_update(false);
                             break;
                         }
@@ -889,12 +888,12 @@ export const deactivate = async () => {
         const active = vscode.window.activeTextEditor;
         const filePath = active?.document.fileName;
 
-        await sendCaptureEvent(CAPTURE_SERVER_BASE, "doc_session", filePath, {
+        await sendCaptureEvent("doc_session", filePath, {
             duration_ms: durationMs,
             duration_seconds: durationMs / 1000.0,
             closed_by: "extension_deactivate",
         });
-        await sendCaptureEvent(CAPTURE_SERVER_BASE, "session_end", filePath, {
+        await sendCaptureEvent("session_end", filePath, {
             mode: "doc",
             closed_by: "extension_deactivate",
         });
@@ -903,7 +902,7 @@ export const deactivate = async () => {
     // CAPTURE: mark the end of an editor session.
     const active = vscode.window.activeTextEditor;
     const endFilePath = active?.document.fileName;
-    await sendCaptureEvent(CAPTURE_SERVER_BASE, "session_end", endFilePath, {
+    await sendCaptureEvent("session_end", endFilePath, {
         mode: "vscode_extension",
     });
 
@@ -1005,6 +1004,7 @@ const stop_client = async () => {
         await codeChatEditorServer.stopServer();
         codeChatEditorServer = undefined;
     }
+    captureTransportReady = false;
 
     if (idle_timer !== undefined) {
         clearTimeout(idle_timer);
