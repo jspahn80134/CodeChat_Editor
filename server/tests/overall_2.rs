@@ -27,25 +27,13 @@ mod overall_common;
 // -------
 //
 // ### Standard library
-use std::{
-    env,
-    error::Error,
-    panic::AssertUnwindSafe,
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use std::{error::Error, path::PathBuf};
 
 // ### Third-party
-use assert_fs::TempDir;
 use dunce::canonicalize;
-use futures::FutureExt;
 use indoc::indoc;
 use pretty_assertions::assert_eq;
-use thirtyfour::{
-    By, ChromiumLikeCapabilities, DesiredCapabilities, WebDriver, error::WebDriverError,
-    start_webdriver_process,
-};
-use tokio::time::sleep;
+use thirtyfour::{By, WebDriver, error::WebDriverError};
 
 // ### Local
 use crate::overall_common::{
@@ -59,10 +47,10 @@ use code_chat_editor::{
     },
     webserver::{
         CursorPosition, EditorMessage, EditorMessageContents, INITIAL_CLIENT_MESSAGE_ID,
-        MESSAGE_ID_INCREMENT, ResultOkTypes, UpdateMessageContents, set_root_path,
+        MESSAGE_ID_INCREMENT, ResultOkTypes, UpdateMessageContents,
     },
 };
-use test_utils::{cast, prep_test_dir};
+use test_utils::prep_test_dir;
 
 make_test!(test_4, test_4_core);
 
@@ -70,15 +58,15 @@ make_test!(test_4, test_4_core);
 // -----
 async fn test_4_core(
     codechat_server: CodeChatEditorServer,
-    driver_ref: &WebDriver,
-    test_dir: &Path,
+    driver: WebDriver,
+    test_dir: PathBuf,
 ) -> Result<(), WebDriverError> {
     let path = canonicalize(test_dir.join("test.py")).unwrap();
     let path_str = path.to_str().unwrap().to_string();
     let ide_version = 0.0;
     perform_loadfile(
         &codechat_server,
-        test_dir,
+        &test_dir,
         "test.py",
         Some((
             indoc!(
@@ -99,12 +87,12 @@ async fn test_4_core(
     .await;
 
     // Target the iframe containing the Client.
-    select_codechat_iframe(driver_ref).await;
+    select_codechat_iframe(&driver).await;
 
     // Switch from one doc block to another. It should produce an update with
     // only cursor/scroll info (no contents).
     let mut client_id = INITIAL_CLIENT_MESSAGE_ID;
-    let doc_blocks = driver_ref.find_all(By::Css(".CodeChat-doc")).await.unwrap();
+    let doc_blocks = driver.find_all(By::Css(".CodeChat-doc")).await.unwrap();
     doc_blocks[0].click().await.unwrap();
     assert_eq!(
         codechat_server.get_message_timeout(TIMEOUT).await.unwrap(),
@@ -157,8 +145,8 @@ make_test!(test_5, test_5_core);
 // Verify that newlines in Mermaid and Graphviz diagrams aren't removed.
 async fn test_5_core(
     codechat_server: CodeChatEditorServer,
-    driver_ref: &WebDriver,
-    test_dir: &Path,
+    driver: WebDriver,
+    test_dir: PathBuf,
 ) -> Result<(), WebDriverError> {
     let path = canonicalize(test_dir.join("test.py")).unwrap();
     let path_str = path.to_str().unwrap().to_string();
@@ -182,7 +170,7 @@ async fn test_5_core(
     .to_string();
     let mut server_id = perform_loadfile(
         &codechat_server,
-        test_dir,
+        &test_dir,
         "test.py",
         Some((orig_text.clone(), version)),
         false,
@@ -191,11 +179,11 @@ async fn test_5_core(
     .await;
 
     // Target the iframe containing the Client.
-    select_codechat_iframe(driver_ref).await;
+    select_codechat_iframe(&driver).await;
 
     // Focus it.
     let contents_css = ".CodeChat-CodeMirror .CodeChat-doc-contents";
-    let doc_block_contents = driver_ref.find(By::Css(contents_css)).await.unwrap();
+    let doc_block_contents = driver.find(By::Css(contents_css)).await.unwrap();
     doc_block_contents.click().await.unwrap();
     // The click produces an updated cursor/scroll location after an autosave
     // delay.
@@ -216,7 +204,7 @@ async fn test_5_core(
     client_id += MESSAGE_ID_INCREMENT;
 
     // Refind it, since it's now switched with a TinyMCE editor.
-    let tinymce_contents = driver_ref.find(By::Id("TinyMCE-inst")).await.unwrap();
+    let tinymce_contents = driver.find(By::Id("TinyMCE-inst")).await.unwrap();
     // Make an edit.
     tinymce_contents.send_keys("foo").await.unwrap();
 
@@ -341,8 +329,8 @@ make_test!(test_6, test_6_core);
 // Verify that edits in document-only mode don't result in data corruption.
 async fn test_6_core(
     codechat_server: CodeChatEditorServer,
-    driver_ref: &WebDriver,
-    test_dir: &Path,
+    driver: WebDriver,
+    test_dir: PathBuf,
 ) -> Result<(), WebDriverError> {
     let path = canonicalize(test_dir.join("test.md")).unwrap();
     let path_str = path.to_str().unwrap().to_string();
@@ -357,7 +345,7 @@ async fn test_6_core(
     .to_string();
     perform_loadfile(
         &codechat_server,
-        test_dir,
+        &test_dir,
         "test.md",
         Some((orig_text.clone(), version)),
         false,
@@ -366,11 +354,11 @@ async fn test_6_core(
     .await;
 
     // Target the iframe containing the Client.
-    select_codechat_iframe(driver_ref).await;
+    select_codechat_iframe(&driver).await;
 
     // Check the content.
     let body_css = "#CodeChat-body .CodeChat-doc-contents";
-    let body_content = driver_ref.find(By::Css(body_css)).await.unwrap();
+    let body_content = driver.find(By::Css(body_css)).await.unwrap();
 
     // Perform edits.
     body_content.send_keys("a").await.unwrap();

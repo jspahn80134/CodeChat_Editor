@@ -27,24 +27,13 @@ mod overall_common;
 // -------
 //
 // ### Standard library
-use std::{
-    env,
-    error::Error,
-    panic::AssertUnwindSafe,
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use std::{error::Error, path::PathBuf, time::Duration};
 
 // ### Third-party
-use assert_fs::TempDir;
 use dunce::canonicalize;
-use futures::FutureExt;
 use indoc::indoc;
 use pretty_assertions::assert_eq;
-use thirtyfour::{
-    By, ChromiumLikeCapabilities, DesiredCapabilities, Key, WebDriver, error::WebDriverError,
-    start_webdriver_process,
-};
+use thirtyfour::{By, Key, WebDriver, error::WebDriverError};
 use tokio::time::sleep;
 
 // ### Local
@@ -60,7 +49,7 @@ use code_chat_editor::{
     },
     webserver::{
         CursorPosition, EditorMessage, EditorMessageContents, INITIAL_CLIENT_MESSAGE_ID,
-        MESSAGE_ID_INCREMENT, ResultOkTypes, UpdateMessageContents, set_root_path,
+        MESSAGE_ID_INCREMENT, ResultOkTypes, UpdateMessageContents,
     },
 };
 use test_utils::{cast, prep_test_dir};
@@ -79,8 +68,8 @@ make_test!(test_server, test_server_core);
 #[allow(deprecated)]
 async fn test_server_core(
     codechat_server: CodeChatEditorServer,
-    driver_ref: &WebDriver,
-    test_dir: &Path,
+    driver: WebDriver,
+    test_dir: PathBuf,
 ) -> Result<(), WebDriverError> {
     let mut expected_messages = ExpectedMessages::new();
     let path = canonicalize(test_dir.join("test.py")).unwrap();
@@ -88,7 +77,7 @@ async fn test_server_core(
     let mut version = 1.0;
     let mut server_id = perform_loadfile(
         &codechat_server,
-        test_dir,
+        &test_dir,
         "test.py",
         Some(("# Test\ncode()".to_string(), version)),
         true,
@@ -101,12 +90,12 @@ async fn test_server_core(
     // #### Doc block tests
     //
     // Verify the first doc block.
-    let codechat_iframe = select_codechat_iframe(driver_ref).await;
+    let codechat_iframe = select_codechat_iframe(&driver).await;
     let indent_css = ".CodeChat-CodeMirror .CodeChat-doc-indent";
-    let doc_block_indent = driver_ref.find(By::Css(indent_css)).await.unwrap();
+    let doc_block_indent = driver.find(By::Css(indent_css)).await.unwrap();
     assert_eq!(doc_block_indent.inner_html().await.unwrap(), "");
     let contents_css = ".CodeChat-CodeMirror .CodeChat-doc-contents";
-    let doc_block_contents = driver_ref.find(By::Css(contents_css)).await.unwrap();
+    let doc_block_contents = driver.find(By::Css(contents_css)).await.unwrap();
     assert_eq!(
         doc_block_contents.inner_html().await.unwrap(),
         "<p>Test</p>\n"
@@ -134,7 +123,7 @@ async fn test_server_core(
     client_id += MESSAGE_ID_INCREMENT;
 
     // Refind it, since it's now switched with a TinyMCE editor.
-    let tinymce_contents = driver_ref.find(By::Id("TinyMCE-inst")).await.unwrap();
+    let tinymce_contents = driver.find(By::Id("TinyMCE-inst")).await.unwrap();
     // Make an edit.
     tinymce_contents.send_keys("foo").await.unwrap();
 
@@ -215,7 +204,7 @@ async fn test_server_core(
     //
     // Verify the first line of code.
     let code_line_css = ".CodeChat-CodeMirror .cm-line";
-    let code_line = driver_ref.find(By::Css(code_line_css)).await.unwrap();
+    let code_line = driver.find(By::Css(code_line_css)).await.unwrap();
     assert_eq!(code_line.inner_html().await.unwrap(), "code()");
 
     // A click will update the current position and focus the code block.
@@ -315,14 +304,14 @@ async fn test_server_core(
     );
 
     // Verify them.
-    let doc_block_indent = driver_ref.find(By::Css(indent_css)).await.unwrap();
+    let doc_block_indent = driver.find(By::Css(indent_css)).await.unwrap();
     assert_eq!(doc_block_indent.inner_html().await.unwrap(), "  ");
-    let doc_block_contents = driver_ref.find(By::Css(contents_css)).await.unwrap();
+    let doc_block_contents = driver.find(By::Css(contents_css)).await.unwrap();
     assert_eq!(
         doc_block_contents.inner_html().await.unwrap(),
         "<p>Testfood</p>"
     );
-    let code_line = driver_ref.find(By::Css(code_line_css)).await.unwrap();
+    let code_line = driver.find(By::Css(code_line_css)).await.unwrap();
     assert_eq!(code_line.inner_html().await.unwrap(), "code()bark");
 
     /*x TODO: these tests fail, since the Client sends an unnecessary OutOfSync message. How to test sending a diff to the client?
@@ -359,7 +348,7 @@ async fn test_server_core(
     let toc_path = canonicalize(test_dir.join("toc.md")).unwrap();
     server_id = perform_loadfile(
         &codechat_server,
-        test_dir,
+        &test_dir,
         "test.md",
         Some(("A **markdown** file.".to_string(), version)),
         true,
@@ -369,7 +358,7 @@ async fn test_server_core(
 
     // Check the content.
     let body_css = "#CodeChat-body .CodeChat-doc-contents";
-    let body_content = driver_ref.find(By::Css(body_css)).await.unwrap();
+    let body_content = driver.find(By::Css(body_css)).await.unwrap();
     assert_eq!(
         body_content.inner_html().await.unwrap(),
         "<p>A <strong>markdown</strong> file.</p>"
@@ -521,7 +510,7 @@ async fn test_server_core(
     server_id += MESSAGE_ID_INCREMENT;
 
     // Look at the content, which should be an iframe.
-    let plain_content = driver_ref
+    let plain_content = driver
         .find(By::Css("#CodeChat-contents"))
         .await
         .unwrap();
@@ -539,13 +528,13 @@ async fn test_server_core(
     // #### PDF viewer
     //
     // Click on the link for the PDF to test.
-    let toc_iframe = driver_ref.find(By::Css("#CodeChat-sidebar")).await.unwrap();
-    driver_ref
+    let toc_iframe = driver.find(By::Css("#CodeChat-sidebar")).await.unwrap();
+    driver
         .switch_to()
         .frame_element(&toc_iframe)
         .await
         .unwrap();
-    let test_pdf = driver_ref.find(By::LinkText("test.pdf")).await.unwrap();
+    let test_pdf = driver.find(By::LinkText("test.pdf")).await.unwrap();
     test_pdf.click().await.unwrap();
 
     // Respond to the current file, then load requests for the PDf and the TOC.
@@ -601,12 +590,12 @@ async fn test_server_core(
     // Check that the PDF viewer was sent.
     //
     // Target the iframe containing the Client.
-    driver_ref
+    driver
         .switch_to()
         .frame_element(&codechat_iframe)
         .await
         .unwrap();
-    let plain_content = driver_ref
+    let plain_content = driver
         .find(By::Css("#CodeChat-contents"))
         .await
         .unwrap();
@@ -634,25 +623,25 @@ make_test!(test_client, test_client_core);
 #[allow(deprecated)]
 async fn test_client_core(
     codechat_server: CodeChatEditorServer,
-    driver_ref: &WebDriver,
-    test_dir: &Path,
+    driver: WebDriver,
+    test_dir: PathBuf,
 ) -> Result<(), WebDriverError> {
     let mut server_id =
-        perform_loadfile(&codechat_server, test_dir, "test.py", None, true, 6.0).await;
+        perform_loadfile(&codechat_server, &test_dir, "test.py", None, true, 6.0).await;
     let path = canonicalize(test_dir.join("test.py")).unwrap();
     let path_str = path.to_str().unwrap().to_string();
 
     // Target the iframe containing the Client.
-    let codechat_iframe = select_codechat_iframe(driver_ref).await;
+    let codechat_iframe = select_codechat_iframe(&driver).await;
 
     // Click on the link for the PDF to test.
-    let toc_iframe = driver_ref.find(By::Css("#CodeChat-sidebar")).await.unwrap();
-    driver_ref
+    let toc_iframe = driver.find(By::Css("#CodeChat-sidebar")).await.unwrap();
+    driver
         .switch_to()
         .frame_element(&toc_iframe)
         .await
         .unwrap();
-    let test_py = driver_ref.find(By::LinkText("test.py")).await.unwrap();
+    let test_py = driver.find(By::LinkText("test.py")).await.unwrap();
     test_py.click().await.unwrap();
 
     // Respond to the current file, then load requests for the PDF and the TOC.
@@ -694,12 +683,12 @@ async fn test_client_core(
     sleep(Duration::from_millis(3000)).await;
 
     // Look for the test results.
-    driver_ref
+    driver
         .switch_to()
         .frame_element(&codechat_iframe)
         .await
         .unwrap();
-    let mocha_results = driver_ref
+    let mocha_results = driver
         .find(By::Css("#mocha-stats .result"))
         .await
         .unwrap();
@@ -724,8 +713,8 @@ make_test!(test_client_updates, test_client_updates_core);
 
 async fn test_client_updates_core(
     codechat_server: CodeChatEditorServer,
-    driver_ref: &WebDriver,
-    test_dir: &Path,
+    driver: WebDriver,
+    test_dir: PathBuf,
 ) -> Result<(), WebDriverError> {
     let ide_version = 0.0;
     let orig_text = indoc!(
@@ -739,7 +728,7 @@ async fn test_client_updates_core(
     .to_string();
     let mut server_id = perform_loadfile(
         &codechat_server,
-        test_dir,
+        &test_dir,
         "test.py",
         Some((orig_text.clone(), ide_version)),
         true,
@@ -751,11 +740,11 @@ async fn test_client_updates_core(
     let path_str = path.to_str().unwrap().to_string();
 
     // Target the iframe containing the Client.
-    select_codechat_iframe(driver_ref).await;
+    select_codechat_iframe(&driver).await;
 
     // Select the doc block and add to the line, causing a word wrap.
     let contents_css = ".CodeChat-CodeMirror .CodeChat-doc-contents";
-    let doc_block_contents = driver_ref.find(By::Css(contents_css)).await.unwrap();
+    let doc_block_contents = driver.find(By::Css(contents_css)).await.unwrap();
     doc_block_contents
         .send_keys("" + Key::End + " testing")
         .await
@@ -830,13 +819,13 @@ async fn test_client_updates_core(
     );
     server_id += MESSAGE_ID_INCREMENT;
 
-    goto_line(&codechat_server, driver_ref, &mut client_id, &path_str, 4)
+    goto_line(&codechat_server, &driver, &mut client_id, &path_str, 4)
         .await
         .unwrap();
 
     // Add an indented comment.
     let code_line_css = ".CodeChat-CodeMirror .cm-line";
-    let code_line = driver_ref.find(By::Css(code_line_css)).await.unwrap();
+    let code_line = driver.find(By::Css(code_line_css)).await.unwrap();
     code_line.send_keys(Key::Home + "# ").await.unwrap();
     // This should edit the (new) third line of the file after word wrap: `def
     // foo():`.
