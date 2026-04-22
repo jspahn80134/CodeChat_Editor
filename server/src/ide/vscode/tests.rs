@@ -64,7 +64,7 @@ use crate::{
 };
 use test_utils::{
     cast,
-    test_utils::{_prep_test_dir, check_logger_errors, configure_testing_logger},
+    test_utils::{check_logger_errors, configure_testing_logger, prep_test_dir_impl},
 };
 
 // Globals
@@ -147,7 +147,7 @@ async fn connect_async_client(connection_id: &str) -> WebSocketStreamTcp {
 ///
 /// Message ids at function end: IDE - 4, Server - 3, Client - 2.
 async fn open_client<S: AsyncRead + AsyncWrite + Unpin>(ws_ide: &mut WebSocketStream<S>) {
-    // 1.  Send the `Opened` message.
+    // 1. Send the `Opened` message.
     //
     // Message ids: IDE - 1->4, Server - 0, Client - 2.
     send_message(
@@ -168,7 +168,7 @@ async fn open_client<S: AsyncRead + AsyncWrite + Unpin>(ws_ide: &mut WebSocketSt
         }
     );
 
-    // 2.  Next, wait for the next message -- the HTML.
+    // 2. Next, wait for the next message -- the HTML.
     //
     // Message ids: IDE - 4, Server - 0->3, Client - 2.
     let em = read_message(ws_ide).await;
@@ -197,7 +197,7 @@ async fn _prep_test(
     test_full_name: &str,
 ) -> (TempDir, PathBuf, WebSocketStreamTcp, WebSocketStreamTcp) {
     configure_testing_logger();
-    let (temp_dir, test_dir) = _prep_test_dir(test_full_name);
+    let (temp_dir, test_dir) = prep_test_dir_impl(test_full_name);
     // Ensure the webserver is running.
     let _ = &*WEBSERVER_HANDLE;
     let now = SystemTime::now();
@@ -973,7 +973,8 @@ async fn test_vscode_ide_websocket4() {
     //
     // Message ids: IDE - 0, Server - 2->3, Client - 0.
     //
-    // Since the version is randomly generated, copy that from the received message.
+    // Since the version is randomly generated, copy that from the received
+    // message.
     let msg = read_message(&mut ws_client).await;
     assert_eq!(
         msg,
@@ -1061,7 +1062,9 @@ async fn test_vscode_ide_websocket4() {
     .await;
     join_handle.join().unwrap();
 
-    // What makes sense here? If the IDE didn't load the file, either the Client shouldn't edit it or the Client should switch to using a filewatcher for edits.
+    // What makes sense here? If the IDE didn't load the file, either the Client
+    // shouldn't edit it or the Client should switch to using a filewatcher for
+    // edits.
     /***
     // Send an update from the Client, which should produce a diff.
     //

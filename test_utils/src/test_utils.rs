@@ -15,9 +15,9 @@
 /// [http://www.gnu.org/licenses](http://www.gnu.org/licenses).
 ///
 /// `test_utils.rs` -- Reusable routines for testing.
-/// ============================================================================
+/// =================================================
 // Imports
-// -----------------------------------------------------------------------------
+// -------
 //
 // ### Standard library
 use std::env;
@@ -33,7 +33,7 @@ use log::Level;
 use crate::testing_logger;
 
 // Macros
-// -----------------------------------------------------------------------------
+// ------
 //
 // Extract a known enum variant or fail. More concise than the alternative (`if
 // let`, or `let else`). From [SO](https://stackoverflow.com/a/69324393). The
@@ -86,31 +86,31 @@ macro_rules! function_name {
     }};
 }
 
-// Call `_prep_test_dir` with the correct parameter -- `function_name!()`.
+// Call `prep_test_dir_impl` with the correct parameter -- `function_name!()`.
 #[macro_export]
 macro_rules! prep_test_dir {
     () => {{
         use $crate::function_name;
-        use $crate::test_utils::_prep_test_dir;
-        _prep_test_dir(function_name!())
+        use $crate::test_utils::prep_test_dir_impl;
+        prep_test_dir_impl(function_name!())
     }};
 }
 
 // Code
-// -----------------------------------------------------------------------------
+// ----
 //
 // Use the `tests/fixtures` path (relative to the root of this Rust project) to
 // store files for testing. A subdirectory tree, named by the module path then
 // name of the test function by convention, contains everything needed for this
 // test. Copy this over to a temporary directory, then run tests there.
-pub fn _prep_test_dir(
+pub fn prep_test_dir_impl(
     // The name of and Rust path to the test function to prepare files for. Call
     // `prep_test_dir!()` to provide this parameter.
     test_full_name: &str,
 ) -> (
     // The temporary directory created which stores files to use in testing.
     TempDir,
-    // The
+    // The directory which contains copied test fixture files.
     PathBuf,
 ) {
     // Get rid of closures in the path.
@@ -183,7 +183,7 @@ pub fn check_logger_errors(num_expected_errors: usize) {
         assert_le!(
             error_logs.len(),
             num_expected_errors,
-            "Error(s) in logs: saw {}, expected {num_expected_errors}.",
+            "Error(s) in logs: saw {}, expected {num_expected_errors} or fewer.",
             error_logs.len()
         );
     });

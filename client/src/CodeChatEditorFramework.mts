@@ -17,7 +17,7 @@
 // `CodeChatEditorFramework.mts` -- the CodeChat Editor Client Framework
 // =====================================================================
 //
-// This maintains a websocket connection between the CodeChat Editor Server. The
+// This maintains a websocket connection with the CodeChat Editor Server. The
 // accompanying HTML is a full-screen iframe, allowing the Framework to change
 // or update the webpage in response to messages received from the websocket, or
 // to report navigation events to as a websocket message when the iframe's
@@ -40,7 +40,7 @@ import {
     KeysOfRustEnum,
     MessageResult,
     UpdateMessageContents,
-} from "./shared_types.mjs";
+} from "./shared.mjs";
 import {
     console_log,
     on_error,
@@ -207,6 +207,7 @@ class WebSocketComm {
                                     contents,
                                     current_update.is_re_translation,
                                     current_update.cursor_position,
+                                    current_update.scroll_position,
                                 );
                             } else {
                                 // If the page is still loading, wait until the
@@ -285,8 +286,7 @@ class WebSocketComm {
                     // `pending_messages`.
                     const pending_message = this.pending_messages[id];
                     if (pending_message !== undefined) {
-                        const { timer_id, callback } =
-                            this.pending_messages[id];
+                        const { timer_id, callback } = pending_message;
                         clearTimeout(timer_id);
                         callback();
                         delete this.pending_messages[id];
@@ -523,7 +523,7 @@ export const format_struct = (complex_data_structure: any): string =>
 /*eslint-disable-next-line @typescript-eslint/no-explicit-any */
 const report_error = (text: string, ...objs: any) => {
     console.error(text);
-    if (objs !== undefined) {
+    if (objs.length > 0) {
         console.log(...objs);
     }
     show_toast(text);

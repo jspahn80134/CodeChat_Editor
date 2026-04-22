@@ -1,8 +1,8 @@
 CodeChat Editor design
-================================================================================
+======================
 
 To build from source
---------------------------------------------------------------------------------
+--------------------
 
 1. Clone or download the repository.
 2. [Install the Rust language](https://www.rust-lang.org/tools/install). I
@@ -18,7 +18,7 @@ Use `./bt` tool's options update all libraries (`update`), run all tests
 (`test`), and more.
 
 <a id="vision"></a>Vision
---------------------------------------------------------------------------------
+-------------------------
 
 These form a set of high-level requirements to guide the project.
 
@@ -136,7 +136,7 @@ These form a set of high-level requirements to guide the project.
 * An API-only view (Doxygen/Javadoc like feature).
 
 <a id="specification"></a>Requirements
---------------------------------------------------------------------------------
+--------------------------------------
 
 The requirements expand on the vision by providing additional details.
 
@@ -204,7 +204,6 @@ void foo();
 
 ### <a id="implementation-programming-language-support"></a>\[Programming language support\](index.md#programming-language-support)
 
-
 Initial targets come from the Stack Overflow Developer Survey 2022's section on
 [programming, scripting, and markup languages](https://survey.stackoverflow.co/2022/#section-most-popular-technologies-programming-scripting-and-markup-languages)
 and IEEE Spectrum's
@@ -256,7 +255,7 @@ When a new tag is inserted, any tag-produced content should be immediately
 added.
 
 License
---------------------------------------------------------------------------------
+-------
 
 Copyright (C) 2025 Bryan A. Jones.
 

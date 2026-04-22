@@ -15,19 +15,19 @@
 // [http://www.gnu.org/licenses](http://www.gnu.org/licenses).
 //
 // `CodeChatEditor-test.mts` -- Tests for the CodeChat Editor client
-// =============================================================================
+// =================================================================
 //
 // To run tests, add a `?test` to any web page served by the CodeChat Editor
 // server.
 //
 // Imports
-// -----------------------------------------------------------------------------
+// -------
 import { assert } from "chai";
 import "mocha/mocha.js";
 import "mocha/mocha.css";
 import { EditorView } from "@codemirror/view";
 import { ChangeSpec, EditorState, EditorSelection } from "@codemirror/state";
-import { CodeMirror, CodeMirrorDocBlockTuple } from "./shared_types.mjs";
+import { CodeMirror, CodeMirrorDocBlockTuple } from "./shared.mjs";
 import {
     DocBlockPlugin,
     CodeMirror_JSON_fields,
@@ -44,7 +44,7 @@ import {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // Tests
-// -----------------------------------------------------------------------------
+// -----
 //
 // <a id="CodeChatEditor_test"></a>Defining this global variable signals the
 // CodeChat Editor to [run tests](CodeChatEditor.mts#CodeChatEditor_test).

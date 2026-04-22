@@ -1,5 +1,5 @@
 The CodeChat Editor extension for Visual Studio Code
-================================================================================
+====================================================
 
 This extension provides the CodeChat Editor's capabilities within the Visual
 Studio Code IDE.
@@ -7,7 +7,7 @@ Studio Code IDE.
 ![Screenshot of the CodeChat Editor extension](https://github.com/bjones1/CodeChat_Editor/blob/main/extensions/VSCode/screenshot.png?raw=true)
 
 Installation
---------------------------------------------------------------------------------
+------------
 
 First, install [Visual Studio Code](https://code.visualstudio.com/). Next:
 
@@ -17,7 +17,7 @@ First, install [Visual Studio Code](https://code.visualstudio.com/). Next:
    since the CodeChat Editor only provides a light theme.
 
 Running
---------------------------------------------------------------------------------
+-------
 
 1. Open a file that the CodeChat Editor
    [supports](https://github.com/bjones1/CodeChat_Editor/blob/main/README.md#supported-languages)
@@ -36,7 +36,7 @@ Running
       then select Enable the CodeChat Editor).
 
 Additional documentation
---------------------------------------------------------------------------------
+------------------------
 
 See the
 [user manual](https://codechat-editor.onrender.com/fw/fsb/opt/render/project/src/README.md).

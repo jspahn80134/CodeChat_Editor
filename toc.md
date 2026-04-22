@@ -1,21 +1,21 @@
 The CodeChat Editor
-================================================================================
+===================
 
 User documentation
-================================================================================
+==================
 
 * [The CodeChat Editor manual](README.md)
 * [The CodeChat Editor extension for Visual Studio Code manual](extensions/VSCode/README.md)
 * [Literate programming using the CodeChat Editor](docs/style_guide.cpp)
 
 Design
-================================================================================
+======
 
 * [CodeChat Editor Design](docs/design.md)
 * [Implementation](docs/implementation.md)
 
 Implementation
-================================================================================
+==============
 
 * [Server](server/readme.md)
   * [main.rs](server/src/main.rs)
@@ -52,9 +52,9 @@ Implementation
     * [CodeChatEditor.mts](client/src/CodeChatEditor.mts)
       * [CodeMirror-integration.mts](client/src/CodeMirror-integration.mts)
       * [tinymce-config.mts](client/src/tinymce-config.mts)
-      * [graphviz-webcomponent-setup.mjs](client/src/graphviz-webcomponent-setup.mts)
+      * [graphviz-webcomponent-setup.mjs](client/src/graphviz-webcomponent-setup.mjs)
       * [Mermaid](client/src/third-party/wc-mermaid/developer.md)
-      * [shared\_types.mts](client/src/shared_types.mts)
+      * [shared.mts](client/src/shared.mts)
       * [assert.mts](client/src/assert.mts)
       * [show\_toast.mts](client/src/show_toast.mts)
     * [global.d.ts](client/src/global.d.ts)
@@ -76,8 +76,8 @@ Implementation
     * [Developer documentation](extensions/VSCode/developer.md)
 * Development tools
   * Builder
-    * [builder/Cargo.toml](Cargo.toml)
-    * [builder/src/main.rs](main.rs)
+    * [builder/Cargo.toml](builder/Cargo.toml)
+    * [builder/src/main.rs](builder/src/main.rs)
   * Git
     * [server/.gitignore](server/.gitignore)
     * [client/static/.gitignore](client/static/.gitignore)
@@ -101,7 +101,7 @@ Implementation
     * [dist.toml](server/dist.toml) - additional cargo-dist configuration
 
 Misc
-================================================================================
+====
 
 * [New project template](new-project-template/README.md)
 * [Table of contents](toc.md)

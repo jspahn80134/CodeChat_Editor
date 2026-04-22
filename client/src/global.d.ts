@@ -15,9 +15,10 @@
 // [http://www.gnu.org/licenses](http://www.gnu.org/licenses).
 //
 // `global.d.ts` -- Global type definitions
-// =============================================================================
+// ========================================
 //
-// Copied from the [TypeScript Docs](https://www.typescriptlang.org/tsconfig/#noUncheckedSideEffectImports):
+// Copied from the
+// [TypeScript Docs](https://www.typescriptlang.org/tsconfig/#noUncheckedSideEffectImports):
 //
 // Recognize all CSS files as module imports.
 declare module "*.css" {}

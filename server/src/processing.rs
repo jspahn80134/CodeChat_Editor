@@ -15,20 +15,11 @@
 // [http://www.gnu.org/licenses](http://www.gnu.org/licenses).
 /// `processing.rs` -- Transform source code to its web-editable equivalent and
 /// back
-/// ============================================================================
+/// ===========================================================================
 // Imports
-// -----------------------------------------------------------------------------
+// -------
 //
 // ### Standard library
-//
-// For commented-out caching code.
-/**
-use std::collections::{HashMap, HashSet};
-use std::fs::Metadata;
-use std::io;
-use std::ops::Deref;
-use std::rc::{Rc, Weak};
-*/
 use std::{
     borrow::Cow,
     cell::RefCell,
@@ -76,7 +67,7 @@ use crate::lexer::{
 };
 
 // Data structures
-// -----------------------------------------------------------------------------
+// ---------------
 //
 // ### Translation between a local (traditional) source file and its web-editable, client-side representation
 //
@@ -249,7 +240,7 @@ pub enum TranslationResultsString {
 // On save, the process is CodeChatForWeb -> Vec\<CodeDocBlocks> -> source code.
 //
 // Globals
-// -----------------------------------------------------------------------------
+// -------
 lazy_static! {
     /// Match the lexer directive in a source file.
     static ref LEXER_DIRECTIVE: Regex = Regex::new(r"CodeChat Editor lexer: (\w+)").unwrap();
@@ -328,7 +319,7 @@ const WORD_WRAP_COLUMN: usize = 80;
 const WORD_WRAP_MIN_WIDTH: usize = 40;
 
 // Serialization for `CodeMirrorDocBlock`
-// -----------------------------------------------------------------------------
+// --------------------------------------
 #[derive(Serialize, Deserialize, TS)]
 #[ts(export)]
 struct CodeMirrorDocBlockTuple<'a>(
@@ -380,7 +371,7 @@ impl<'de> Deserialize<'de> for CodeMirrorDocBlock {
 }
 
 // Determine if the provided file is part of a project
-// -----------------------------------------------------------------------------
+// ---------------------------------------------------
 pub fn find_path_to_toc(file_path: &Path) -> Option<PathBuf> {
     // To determine if this source code is part of a project, look for a project
     // file by searching the current directory, then all its parents, for a file
@@ -420,7 +411,7 @@ pub enum CodechatForWebToSourceError {
 }
 
 // Transform `CodeChatForWeb` to source code
-// -----------------------------------------------------------------------------
+// -----------------------------------------
 /// This function takes in a source file in web-editable format (the
 /// `CodeChatForWeb` struct) and transforms it into source code.
 pub fn codechat_for_web_to_source(
@@ -465,7 +456,7 @@ pub fn codechat_for_web_to_source(
         .map_err(CodechatForWebToSourceError::CannotTranslateCodeChat)
 }
 
-/// Return the byte index of `s[u16_16_index]`, where the indexing operation is
+/// Return the byte index of `s[utf_16_index]`, where the indexing operation is
 /// in UTF-16 code units.
 fn byte_index_of(s: &str, utf_16_index: usize) -> usize {
     let mut byte_index = 0;
@@ -657,7 +648,7 @@ pub enum CodeDocBlockVecToSourceError {
 
 // Turn this vec of CodeDocBlocks into a string of source code.
 fn code_doc_block_vec_to_source(
-    code_doc_block_vec: &Vec<CodeDocBlock>,
+    code_doc_block_vec: &[CodeDocBlock],
     lexer: &LanguageLexerCompiled,
 ) -> Result<String, CodeDocBlockVecToSourceError> {
     let mut file_contents = String::new();
@@ -814,7 +805,7 @@ pub enum SourceToCodeChatForWebError {
 }
 
 // Transform from source code to `CodeChatForWeb`
-// -----------------------------------------------------------------------------
+// ----------------------------------------------
 //
 // Given the contents of a file, classify it and (for CodeChat Editor files)
 // convert it to the `CodeChatForWeb` format.
@@ -893,7 +884,7 @@ pub fn source_to_codechat_for_web(
             // Walk through the code/doc blocks, ...
             let doc_contents = code_doc_block_arr
                 .iter()
-                // ...selcting only the doc block contents...
+                // ...selecting only the doc block contents...
                 .filter_map(|cdb| {
                     if let CodeDocBlock::DocBlock(db) = cdb {
                         Some(db.contents.as_str())
@@ -919,21 +910,21 @@ pub fn source_to_codechat_for_web(
             // 3. Hydrate the cleaned HTML.
             let html = hydrate_html(&html)
                 .map_err(|e| SourceToCodeChatForWebError::ParseFailed(e.to_string()))?;
-            // 3. Split on the separator.
+            // 4. Split on the separator.
             let mut doc_block_contents_iter = html.split(DOC_BLOCK_SEPARATOR_SPLIT_STRING);
             // <a class="fence-mending-end"></a>
 
             // Translate each `CodeDocBlock` to its `CodeMirror` equivalent.
+            let mut len = len_utf16(&code_mirror.doc);
             for code_or_doc_block in code_doc_block_arr {
                 let source = &mut code_mirror.doc;
                 match code_or_doc_block {
-                    CodeDocBlock::CodeBlock(code_string) => source.push_str(&code_string),
+                    CodeDocBlock::CodeBlock(code_string) => {
+                        source.push_str(&code_string);
+                        len += len_utf16(&code_string)
+                    }
                     CodeDocBlock::DocBlock(doc_block) => {
                         // Create the doc block.
-                        //
-                        // Get the length of the string in characters (not
-                        // bytes, which is what `len()` returns).
-                        let len = source.chars().count();
                         code_mirror.doc_blocks.push(CodeMirrorDocBlock {
                             from: len,
                             // To. Note that the last doc block could be zero
@@ -949,6 +940,7 @@ pub fn source_to_codechat_for_web(
                         // replace these in the editor. This keeps the line
                         // numbering of non-doc blocks correct.
                         source.push_str(&"\n".repeat(doc_block.lines));
+                        len += doc_block.lines;
                     }
                 }
             }
@@ -957,6 +949,11 @@ pub fn source_to_codechat_for_web(
     };
 
     Ok(TranslationResults::CodeChat(codechat_for_web))
+}
+
+// Compute the length of the provided string in UTF16 characters.
+fn len_utf16(s: &str) -> usize {
+    s.chars().map(|c| c.len_utf16()).sum()
 }
 
 // Like `source_to_codechat_for_web`, translate a source file to the CodeChat
@@ -1313,7 +1310,7 @@ static CUSTOM_ELEMENT_TO_CODE_BLOCK_LANGUAGE: phf::Map<&'static str, &'static st
 // this approach is to modify only what changed, rather than changing
 // everything. As a secondary goal, this hopefully improves overall performance
 // by sending less data between the server and the client, in spite of the
-// additional computational requirements for compting the diff.
+// additional computational requirements for computing the diff.
 //
 // Fundamentally, diffs of a string and diff of this vector require different
 // approaches:
@@ -1489,7 +1486,7 @@ pub fn diff_code_mirror_doc_blocks(
                             &prev_after_range_start_val.delimiter,
                         ),
                         contents: diff_str(
-                            &prev_after_range_start_val.contents,
+                            &prev_before_range_start_val.contents,
                             &prev_after_range_start_val.contents,
                         ),
                     },
@@ -1596,15 +1593,10 @@ pub fn diff_code_mirror_doc_blocks(
     let mut immediate_sequence_start_index: Option<usize> = None;
     for index in 0..change_specs.len() {
         let is_add = matches!(&change_specs[index], CodeMirrorDocBlockTransaction::Add(_));
-        let is_inserted_update = if let CodeMirrorDocBlockTransaction::Update(update) =
-            &change_specs[index]
-            && let Some(from_new) = update.from_new
-            && from_new > update.from
-        {
-            true
-        } else {
-            false
-        };
+        let is_inserted_update = matches!(
+            &change_specs[index],
+            CodeMirrorDocBlockTransaction::Update(u) if u.from_new.is_some_and(|f| f > u.from)
+        );
         if is_add || is_inserted_update {
             // This is an update produced by inserting lines.
             if immediate_sequence_start_index.is_none() {
@@ -1629,217 +1621,7 @@ pub fn diff_code_mirror_doc_blocks(
     change_specs
 }
 
-// Goal: make it easy to update the data structure. We update on every
-// load/save, then do some accesses during those processes.
-//
-// Top-level data structures: a file HashSet\<PathBuf, FileAnchor> and an id
-// HashMap\<id, {Anchor, HashSet\<referring\_id>}>. Some FileAnchors in the file
-// HashSet are also in a pending load list..
-//
-// * To update a file:
-//   * Remove the old file from the file HasHMap. Add an empty FileAnchor to the
-//     file HashMap.
-//   * For each id, see if that id already exists.
-//     * If the id exists: if it refers to an id in the old FileAnchor, replace
-//       it with the new one. If not, need to perform resolution on this id (we
-//       have a non-unique id; how to fix?).
-//     * If the id doesn't exist: create a new one.
-//   * For each hyperlink, see if that id already exists.
-//     * If so, upsert the referring id. Check the metadata on the id to make
-//       sure that data is current. If not, add this to the pending hyperlinks
-//       list. If the file is missing, delete it from the cache.
-//     * If not, create a new entry in the id HashSet and add the referring id
-//       to the HashSet. Add the file to a pending hyperlinks list.
-//   * When the file is processed:
-//     * Look for all entries in the pending file list that refer to the current
-//       file and resolve these. Start another task to load in all pending
-//       files.
-//     * Look at the old file; remove each id that's still in the id HashMap. If
-//       the id was in the HashMap and it also was a Hyperlink, remove that from
-//       the HashSet.
-// * To remove a file from the HashMap:
-//   * Remove it from the file HashMap.
-//   * For each hyperlink, remove it from the HashSet of referring links (if
-//     that id still exists).
-//   * For each id, remove it from the id HashMap.
-// * To add a file from the HashSet:
-//   * Perform an update with an empty FileAnchor.
-//
-// Pending hyperlinks list: for each hyperlink,
-//
-// * check if the id is now current in the cache. If so, add the referring id to
-//   the HashSet then move to the next hyperlink.
-// * check if the file is now current in the cache. If not, load the file and
-//   update the cache, then go to step 1.
-// * The id was not found, even in the expected file. Add the hyperlink to a
-//   broken links set?
-//
-// Global operations:
-//
-// * Scan all files, then perform add/upsert/removes based on differences with
-//   the cache.
-//
-// Functions:
-//
-// * Upsert an Anchor.
-// * Upsert a Hyperlink.
-// * Upsert a file.
-// * Remove a file.
-/*x
-/// There are two types of files that can serve as an anchor: these are file
-/// anchor targets.
-enum FileAnchor {
-    Plain(PlainFileAnchor),
-    Html(HtmlFileAnchor),
-}
-
-/// This is the cached metadata for a file that serves as an anchor: perhaps an
-/// image, a PDF, or a video.
-struct PlainFileAnchor {
-    /// A relative path to this file, rooted at the project's TOC.
-    path: Rc<PathBuf>,
-    /// The globally-unique anchor used to link to this file. It's generated
-    /// based on hash of the file's contents, so that each file will have a
-    /// unique identifier.
-    anchor: String,
-    /// Metadata captured when this data was cached. If it disagrees with the
-    /// file's current state, then this cached data should be re=generated from
-    /// the file.
-    file_metadata: Metadata,
-}
-
-/// Cached metadata for an HTML file.
-struct HtmlFileAnchor {
-    /// The file containing this HTML.
-    file_anchor: PlainFileAnchor,
-    /// The TOC numbering of this file.
-    numbering: Vec<Option<u32>>,
-    /// The headings in this file.
-    headings: Vec<HeadingAnchor>,
-    /// Anchors which appear before the first heading.
-    pre_anchors: Vec<NonHeadingAnchor>,
-}
-
-/// Cached metadata shared by both headings (which are also anchors) and
-/// non-heading anchors.
-struct AnchorCommon {
-    /// The HTML file containing this anchor.
-    html_file_anchor: Weak<FileAnchor>,
-    /// The globally-unique anchor used to link to this object.
-    anchor: String,
-    /// The inner HTML of this anchor.
-    inner_html: String,
-    /// The hyperlink this anchor contains.
-    hyperlink: Option<Rc<Hyperlink>>,
-}
-
-/// An anchor is defined only in these two places: the anchor source.
-enum HtmlAnchor {
-    Heading(HeadingAnchor),
-    NonHeading(NonHeadingAnchor),
-}
-
-/// Cached metadata for a heading (which is always also an anchor).
-struct HeadingAnchor {
-    anchor_common: AnchorCommon,
-    /// The numbering of this heading on the HTML file containing it.
-    numbering: Vec<Option<u32>>,
-    /// Non-heading anchors which appear after this heading but before the next
-    /// heading.
-    non_heading_anchors: Vec<NonHeadingAnchor>,
-}
-
-/// Cached metadata for a non-heading anchor.
-struct NonHeadingAnchor {
-    anchor_common: AnchorCommon,
-    /// The heading this anchor appears after (unless it appears before the
-    /// first heading in this file).
-    parent_heading: Option<Weak<HeadingAnchor>>,
-    /// A snippet of HTML preceding this anchor.
-    pre_snippet: String,
-    /// A snippet of HTML following this anchor.
-    post_snippet: String,
-    /// If this is a numbered item, the name of the numbering group it belongs
-    /// to.
-    numbering_group: Option<String>,
-    /// If this is a numbered item, its number.
-    number: u32,
-}
-
-/// An anchor can refer to any of these structs: these are all possible anchor
-/// targets.
-enum Anchor {
-    Html(HtmlAnchor),
-    File(FileAnchor),
-}
-
-/// The metadata for a hyperlink.
-struct Hyperlink {
-    /// The file this hyperlink refers to.
-    file: PathBuf,
-    /// The anchor this hyperlink refers to.
-    html_anchor: String,
-}
-
-/// The value stored in the id HashMap.
-struct AnchorVal {
-    /// The target anchor this id refers to.
-    anchor: Anchor,
-    /// All hyperlinks which target this anchor.
-    referring_links: Rc<HashSet<String>>,
-}
-
-// Given HTML, catalog all link targets and link-like items, ensuring that they
-// have a globally unique id.
-fn html_analyze(
-    file_path: &Path,
-    html: &str,
-    mut file_map: HashMap<Rc<PathBuf>, Rc<FileAnchor>>,
-    mut anchor_map: HashMap<Rc<String>, HashSet<AnchorVal>>,
-) -> io::Result<String> {
-    // Create the missing anchors:
-    //
-    // A missing file.
-    let missing_html_file_anchor = Rc::new(FileAnchor::Html(HtmlFileAnchor {
-        file_anchor: PlainFileAnchor {
-            path: Rc::new(PathBuf::new()),
-            anchor: "".to_string(),
-            // TODO: is there some way to create generic/empty metadata?
-            file_metadata: Path::new(".").metadata().unwrap(),
-        },
-        numbering: Vec::new(),
-        headings: Vec::new(),
-        pre_anchors: Vec::new(),
-    }));
-    // Define an anchor in this file.
-    let missing_anchor = NonHeadingAnchor {
-        anchor_common: AnchorCommon {
-            html_file_anchor: Rc::downgrade(&missing_html_file_anchor),
-            anchor: "".to_string(),
-            hyperlink: None,
-            inner_html: "".to_string(),
-        },
-        parent_heading: None,
-        pre_snippet: "".to_string(),
-        post_snippet: "".to_string(),
-        numbering_group: None,
-        number: 0,
-    };
-    // Add this to the top-level hashes.
-    let anchor_val = AnchorVal {
-        anchor: Anchor::Html(HtmlAnchor::NonHeading(missing_anchor)),
-        referring_links: Rc::new(HashSet::new()),
-    };
-    //file_map.insert(mfa.file_anchor.path, missing_html_file_anchor);
-    //let anchor_val_set: HashSet<AnchorVal> = HashSet::new();
-    //anchor_val_set.insert(anchor_val);
-    //anchor_map.insert(&mfa.file_anchor.anchor, anchor_val_set);
-
-    Ok("".to_string())
-}
-*/
-
 // Tests
-// -----------------------------------------------------------------------------
+// -----
 #[cfg(test)]
 mod tests;

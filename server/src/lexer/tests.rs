@@ -15,9 +15,9 @@
 /// [http://www.gnu.org/licenses](http://www.gnu.org/licenses).
 ///
 /// `test.rs` -- Unit tests for the lexer
-/// ============================================================================
+/// =====================================
 // Imports
-// -----------------------------------------------------------------------------
+// -------
 use super::supported_languages::get_language_lexer_vec;
 use super::{CodeDocBlock, DocBlock, compile_lexers, source_lexer};
 use indoc::indoc;
@@ -25,7 +25,7 @@ use pretty_assertions::assert_eq;
 use test_utils::test_utils::stringit;
 
 // Utilities
-// -----------------------------------------------------------------------------
+// ---------
 //
 // Provide a compact way to create a `CodeDocBlock`.
 fn build_doc_block(indent: &str, delimiter: &str, contents: &str) -> CodeDocBlock {
@@ -590,19 +590,28 @@ fn test_rust() {
 
     assert_eq!(
         source_lexer(
-            r#"/* Depth 1
+            r#" /* Depth 1
   /* Depth 2 comment */
   /* Depth 2
     /* Depth 3 */ */
+  /* Depth 2
+    /* Depth 3 comment */
+   */
 More depth 1 */"#,
             rust
         ),
         [
-            build_code_block("/* Depth 1\n"),
+            build_code_block(" /* Depth 1\n"),
             build_doc_block("  ", "/*", "Depth 2 comment\n"),
             build_code_block(
                 r#"  /* Depth 2
     /* Depth 3 */ */
+  /* Depth 2
+"#
+            ),
+            build_doc_block("    ", "/*", "Depth 3 comment\n"),
+            build_code_block(
+                r#"   */
 More depth 1 */"#
             ),
         ]

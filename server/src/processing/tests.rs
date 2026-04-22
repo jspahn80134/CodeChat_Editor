@@ -288,64 +288,57 @@ fn test_code_doc_blocks_to_source_py() {
     let py_lexer = llc.map_mode_to_lexer.get(&stringit("python")).unwrap();
 
     // An empty document.
-    assert_eq!(code_doc_block_vec_to_source(&vec![], py_lexer).unwrap(), "");
+    assert_eq!(code_doc_block_vec_to_source(&[], py_lexer).unwrap(), "");
     // A one-line comment.
     assert_eq!(
-        code_doc_block_vec_to_source(&vec![build_doc_block("", "#", "Test")], py_lexer).unwrap(),
+        code_doc_block_vec_to_source(&[build_doc_block("", "#", "Test")], py_lexer).unwrap(),
         "# Test"
     );
     assert_eq!(
-        code_doc_block_vec_to_source(&vec![build_doc_block("", "#", "Test\n")], py_lexer).unwrap(),
+        code_doc_block_vec_to_source(&[build_doc_block("", "#", "Test\n")], py_lexer).unwrap(),
         "# Test\n"
     );
     // Check empty doc block lines and multiple lines.
     assert_eq!(
-        code_doc_block_vec_to_source(
-            &vec![build_doc_block("", "#", "Test 1\n\nTest 2")],
-            py_lexer
-        )
-        .unwrap(),
+        code_doc_block_vec_to_source(&[build_doc_block("", "#", "Test 1\n\nTest 2")], py_lexer)
+            .unwrap(),
         "# Test 1\n#\n# Test 2"
     );
 
     // Repeat the above tests with an indent.
     assert_eq!(
-        code_doc_block_vec_to_source(&vec![build_doc_block(" ", "#", "Test")], py_lexer).unwrap(),
+        code_doc_block_vec_to_source(&[build_doc_block(" ", "#", "Test")], py_lexer).unwrap(),
         " # Test"
     );
     assert_eq!(
-        code_doc_block_vec_to_source(&vec![build_doc_block("  ", "#", "Test\n")], py_lexer)
-            .unwrap(),
+        code_doc_block_vec_to_source(&[build_doc_block("  ", "#", "Test\n")], py_lexer).unwrap(),
         "  # Test\n"
     );
     assert_eq!(
-        code_doc_block_vec_to_source(
-            &vec![build_doc_block("   ", "#", "Test 1\n\nTest 2")],
-            py_lexer
-        )
-        .unwrap(),
+        code_doc_block_vec_to_source(&[build_doc_block("   ", "#", "Test 1\n\nTest 2")], py_lexer)
+            .unwrap(),
         "   # Test 1\n   #\n   # Test 2"
     );
 
     // Basic code.
     assert_eq!(
-        code_doc_block_vec_to_source(&vec![build_code_block("Test")], py_lexer).unwrap(),
+        code_doc_block_vec_to_source(&[build_code_block("Test")], py_lexer).unwrap(),
         "Test"
     );
 
     // An incorrect delimiter.
     assert_eq!(
-        code_doc_block_vec_to_source(&vec![build_doc_block("", "?", "Test")], py_lexer),
+        code_doc_block_vec_to_source(&[build_doc_block("", "?", "Test")], py_lexer),
         Err(CodeDocBlockVecToSourceError::UnknownCommentOpeningDelimiter("?".to_string()))
     );
 
     // Empty doc blocks separated by an empty code block.
     assert_eq!(
         code_doc_block_vec_to_source(
-            &vec![
+            &[
                 build_doc_block("", "#", "\n"),
                 build_code_block("\n"),
-                build_doc_block("", "#", ""),
+                build_doc_block("", "#", "")
             ],
             py_lexer
         )
@@ -355,10 +348,10 @@ fn test_code_doc_blocks_to_source_py() {
 
     assert_eq!(
         code_doc_block_vec_to_source(
-            &vec![
+            &[
                 build_doc_block("", "#", "σ\n"),
                 build_code_block("σ\n"),
-                build_doc_block("", "#", "σ"),
+                build_doc_block("", "#", "σ")
             ],
             py_lexer
         )
@@ -375,24 +368,20 @@ fn test_code_doc_blocks_to_source_css() {
     let css_lexer = llc.map_mode_to_lexer.get(&stringit("css")).unwrap();
 
     // An empty document.
-    assert_eq!(
-        code_doc_block_vec_to_source(&vec![], css_lexer).unwrap(),
-        ""
-    );
+    assert_eq!(code_doc_block_vec_to_source(&[], css_lexer).unwrap(), "");
     // A one-line comment.
     assert_eq!(
-        code_doc_block_vec_to_source(&vec![build_doc_block("", "/*", "Test\n")], css_lexer)
-            .unwrap(),
+        code_doc_block_vec_to_source(&[build_doc_block("", "/*", "Test\n")], css_lexer).unwrap(),
         "/* Test */\n"
     );
     assert_eq!(
-        code_doc_block_vec_to_source(&vec![build_doc_block("", "/*", "Test")], css_lexer).unwrap(),
+        code_doc_block_vec_to_source(&[build_doc_block("", "/*", "Test")], css_lexer).unwrap(),
         "/* Test */"
     );
     // Check empty doc block lines and multiple lines.
     assert_eq!(
         code_doc_block_vec_to_source(
-            &vec![
+            &[
                 build_code_block("Test_0\n"),
                 build_doc_block("", "/*", "Test 1\n\nTest 2\n")
             ],
@@ -408,13 +397,12 @@ fn test_code_doc_blocks_to_source_css() {
 
     // Repeat the above tests with an indent.
     assert_eq!(
-        code_doc_block_vec_to_source(&vec![build_doc_block("  ", "/*", "Test\n")], css_lexer)
-            .unwrap(),
+        code_doc_block_vec_to_source(&[build_doc_block("  ", "/*", "Test\n")], css_lexer).unwrap(),
         "  /* Test */\n"
     );
     assert_eq!(
         code_doc_block_vec_to_source(
-            &vec![
+            &[
                 build_code_block("Test_0\n"),
                 build_doc_block("   ", "/*", "Test 1\n\nTest 2\n")
             ],
@@ -430,13 +418,13 @@ fn test_code_doc_blocks_to_source_css() {
 
     // Basic code.
     assert_eq!(
-        code_doc_block_vec_to_source(&vec![build_code_block("Test")], css_lexer).unwrap(),
+        code_doc_block_vec_to_source(&[build_code_block("Test")], css_lexer).unwrap(),
         "Test"
     );
 
     // An incorrect delimiter.
     assert_eq!(
-        code_doc_block_vec_to_source(&vec![build_doc_block("", "?", "Test")], css_lexer),
+        code_doc_block_vec_to_source(&[build_doc_block("", "?", "Test")], css_lexer),
         Err(CodeDocBlockVecToSourceError::UnknownCommentOpeningDelimiter("?".to_string()))
     );
 }
@@ -448,37 +436,32 @@ fn test_code_doc_blocks_to_source_csharp() {
     let csharp_lexer = llc.map_mode_to_lexer.get(&stringit("csharp")).unwrap();
 
     // An empty document.
-    assert_eq!(
-        code_doc_block_vec_to_source(&vec![], csharp_lexer).unwrap(),
-        ""
-    );
+    assert_eq!(code_doc_block_vec_to_source(&[], csharp_lexer).unwrap(), "");
 
     // An invalid comment.
     assert_eq!(
-        code_doc_block_vec_to_source(&vec![build_doc_block("", "?", "Test\n")], csharp_lexer),
+        code_doc_block_vec_to_source(&[build_doc_block("", "?", "Test\n")], csharp_lexer),
         Err(CodeDocBlockVecToSourceError::UnknownCommentOpeningDelimiter("?".to_string()))
     );
 
     // Inline comments.
     assert_eq!(
-        code_doc_block_vec_to_source(&vec![build_doc_block("", "//", "Test\n")], csharp_lexer)
-            .unwrap(),
+        code_doc_block_vec_to_source(&[build_doc_block("", "//", "Test\n")], csharp_lexer).unwrap(),
         "// Test\n"
     );
     assert_eq!(
-        code_doc_block_vec_to_source(&vec![build_doc_block("", "///", "Test\n")], csharp_lexer)
+        code_doc_block_vec_to_source(&[build_doc_block("", "///", "Test\n")], csharp_lexer)
             .unwrap(),
         "/// Test\n"
     );
 
     // Block comments.
     assert_eq!(
-        code_doc_block_vec_to_source(&vec![build_doc_block("", "/*", "Test\n")], csharp_lexer)
-            .unwrap(),
+        code_doc_block_vec_to_source(&[build_doc_block("", "/*", "Test\n")], csharp_lexer).unwrap(),
         "/* Test */\n"
     );
     assert_eq!(
-        code_doc_block_vec_to_source(&vec![build_doc_block("", "/**", "Test\n")], csharp_lexer)
+        code_doc_block_vec_to_source(&[build_doc_block("", "/**", "Test\n")], csharp_lexer)
             .unwrap(),
         "/** Test */\n"
     );
@@ -644,23 +627,48 @@ fn test_source_to_codechat_for_web_1() {
         )))
     );
 
-    // Test Unicode characters in code.
+    // Test Unicode characters and multi-byte Unicode characters in code.
+    //
+    // ```
+    //       \u03c3  \ud83d \ude04 \ud83d \udc49 \ud83c \udfff \ud83d \udc68 \u200d \ud83d \udc66 \ud83c \uddfa \ud83c \uddf3
+    // index:   0       1      2      3      4      5      6      7      8      9      10     11     12     13     14     15
+    // char:  --σ--     ---😄---      ----------👉🏿---------      --------------👨‍👦--------------     -----------🇺🇳----------
+    // ```
+    //
+    // These are taken from the [MDN UTF-16
+    // docs](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String#utf-16_characters_unicode_code_points_and_grapheme_clusters).
     assert_eq!(
-        source_to_codechat_for_web("; // σ\n//", &"cpp".to_string(), 0.0, false, false),
+        source_to_codechat_for_web("; // σ😄👉🏿👨‍👦🇺🇳\n//", &"cpp".to_string(), 0.0, false, false),
         Ok(TranslationResults::CodeChat(build_codechat_for_web(
             "cpp",
-            "; // σ\n",
-            vec![build_codemirror_doc_block(7, 8, "", "//", ""),]
+            "; // σ😄👉🏿👨‍👦🇺🇳\n",
+            vec![build_codemirror_doc_block(22, 23, "", "//", ""),]
         )))
     );
 
-    // Test Unicode characters in strings.
+    // Test Unicode characters and multi-byte Unicode characters in strings.
     assert_eq!(
-        source_to_codechat_for_web("\"σ\";\n//", &"cpp".to_string(), 0.0, false, false),
+        source_to_codechat_for_web("\"σ😄👉🏿👨‍👦🇺🇳\";\n//", &"cpp".to_string(), 0.0, false, false),
         Ok(TranslationResults::CodeChat(build_codechat_for_web(
             "cpp",
-            "\"σ\";\n",
-            vec![build_codemirror_doc_block(5, 6, "", "//", ""),]
+            "\"σ😄👉🏿👨‍👦🇺🇳\";\n",
+            vec![build_codemirror_doc_block(20, 21, "", "//", ""),]
+        )))
+    );
+
+    // Test Unicode characters and multi-byte Unicode characters in comments.
+    assert_eq!(
+        source_to_codechat_for_web("// σ😄👉🏿👨‍👦🇺🇳\n;", &"cpp".to_string(), 0.0, false, false),
+        Ok(TranslationResults::CodeChat(build_codechat_for_web(
+            "cpp",
+            "\n;",
+            vec![build_codemirror_doc_block(
+                0,
+                1,
+                "",
+                "//",
+                "<p>σ😄👉🏿👨‍👦🇺🇳</p>\n"
+            ),]
         )))
     );
 

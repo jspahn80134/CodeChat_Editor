@@ -15,13 +15,13 @@
 /// [http://www.gnu.org/licenses](http://www.gnu.org/licenses).
 ///
 /// `supported_languages.rs` - Provide lexer info for all supported languages
-/// ============================================================================
+/// =========================================================================
 ///
 /// This file contains a data structure which describes all supported languages;
 /// the [lexer](../lexer.rs) uses this lex a given language.
 ///
 /// Lexer implementation
-/// ----------------------------------------------------------------------------
+/// --------------------
 ///
 /// Ordering matters: all these delimiters end up in a large regex separated by
 /// an or operator. The regex or operator matches from left to right. So, longer
@@ -31,8 +31,9 @@
 /// then if that's not found, the single quote. A regex of `"|"""` would never
 /// match the triple quote, since the single quote would match first.
 ///
-/// Note that the lexers here should be complemented by the appropriate Ace mode
-/// in [ace-webpack.mts](../../../client/src/ace-webpack.mts).
+/// Note that the lexers here should be complemented by the appropriate
+/// CodeMirror mode in
+/// [CodeMirror-integration.mts](../../../client/src/CodeMirror-integration.mts).
 ///
 /// ### <a id="string_delimiter_doubling"></a>String delimiter doubling
 ///
@@ -45,7 +46,7 @@
 /// doesn't parse the string correctly, it does correctly identify where
 /// comments can't be, which is all that the lexer needs to do.
 // Imports
-// -----------------------------------------------------------------------------
+// -------
 //
 // ### Standard library
 use std::sync::Arc;
@@ -59,7 +60,7 @@ use super::{
 pub const MARKDOWN_MODE: &str = "markdown";
 
 // Helper functions
-// -----------------------------------------------------------------------------
+// ----------------
 //
 // These functions simplify the syntax needed to create a `LanguageLexer`.
 #[allow(clippy::too_many_arguments)]
@@ -125,7 +126,7 @@ fn make_block_comment_delim(opening: &str, closing: &str, is_nestable: bool) -> 
 }
 
 // Define lexers for each supported language.
-// -----------------------------------------------------------------------------
+// ------------------------------------------
 pub fn get_language_lexer_vec() -> Vec<LanguageLexer> {
     vec![
         // ### Linux shell scripts
@@ -182,19 +183,23 @@ pub fn get_language_lexer_vec() -> Vec<LanguageLexer> {
             // [6.3.3 Comments](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/language-specification/lexical-structure#633-comments).
             // Also provide support for
             // [documentation comments](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/language-specification/documentation-comments).
-            &["//", "///"],
+            &["///", "//"],
             &[
-                make_block_comment_delim("/*", "*/", false),
                 make_block_comment_delim("/**", "*/", false),
+                make_block_comment_delim("/*", "*/", false),
             ],
             &[make_string_delimiter_spec(
                 // See
                 // [6.4.5.6 String literals](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/language-specification/lexical-structure#6456-string-literals).
+                // This should also handle interpolated string literals.
                 "\"",
                 "\\",
                 NewlineSupport::None,
             )],
+            // TODO: support
+            // [C# 11 raw string literals](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/tokens/raw-string).
             None,
+            // This also handles interpolated verbatim string literals.
             SpecialCase::CSharpVerbatimStringLiteral,
             None,
         ),
@@ -219,7 +224,7 @@ pub fn get_language_lexer_vec() -> Vec<LanguageLexer> {
             // See
             // [The Go Programming Language Specification](https://go.dev/ref/spec)
             // on [Comments](https://go.dev/ref/spec#Comments).
-            &[],
+            &["//"],
             &[make_block_comment_delim("/*", "*/", false)],
             // See [String literals](https://go.dev/ref/spec#String_literals).
             &[
@@ -237,8 +242,8 @@ pub fn get_language_lexer_vec() -> Vec<LanguageLexer> {
             &[],
             &[make_block_comment_delim("<!--", "-->", false)],
             &[
-                make_string_delimiter_spec("\"", "\\", NewlineSupport::Unescaped),
-                make_string_delimiter_spec("'", "\\", NewlineSupport::Unescaped),
+                make_string_delimiter_spec("\"", "", NewlineSupport::Unescaped),
+                make_string_delimiter_spec("'", "", NewlineSupport::Unescaped),
             ],
             None,
             SpecialCase::None,
@@ -259,17 +264,17 @@ pub fn get_language_lexer_vec() -> Vec<LanguageLexer> {
             // See
             // [§3.10.5. String Literals](https://docs.oracle.com/javase/specs/jls/se19/html/jls-3.html#jls-3.10.5).
             &[
-                make_string_delimiter_spec(
-                    "\"",
-                    "\\",
-                    // Per the previous link, <q>It is a compile-time error for
-                    // a line terminator (§3.4) to appear after the opening "
-                    // and before the matching closing "."</q>
-                    NewlineSupport::None,
-                ),
                 // See
                 // [§3.10.6. Text Blocks](https://docs.oracle.com/javase/specs/jls/se19/html/jls-3.html#jls-3.10.6).
                 make_string_delimiter_spec("\"\"\"", "\\", NewlineSupport::Unescaped),
+                make_string_delimiter_spec(
+                    "\"",
+                    "\\",
+                    // Per §3.10.5, <q>It is a compile-time error for a line
+                    // terminator (§3.4) to appear after the opening " and
+                    // before the matching closing "."</q>
+                    NewlineSupport::None,
+                ),
             ],
             None,
             SpecialCase::None,
@@ -370,7 +375,7 @@ pub fn get_language_lexer_vec() -> Vec<LanguageLexer> {
             ],
             // Likewise, raw byte strings behave identically to raw strings from
             // this lexer's perspective.
-            make_heredoc_delim("r", "#+", "\"", "\"", ""),
+            make_heredoc_delim("r", "#*", "\"", "\"", ""),
             SpecialCase::None,
             None,
         ),
@@ -446,7 +451,7 @@ pub fn get_language_lexer_vec() -> Vec<LanguageLexer> {
                 // Basic strings
                 make_string_delimiter_spec("\"", "\\", NewlineSupport::None),
                 // Literal strings
-                make_string_delimiter_spec("'", "\\", NewlineSupport::Escaped),
+                make_string_delimiter_spec("'", "", NewlineSupport::None),
             ],
             None,
             SpecialCase::None,
@@ -459,8 +464,8 @@ pub fn get_language_lexer_vec() -> Vec<LanguageLexer> {
             &["//"],
             &[make_block_comment_delim("/*", "*/", false)],
             &[
-                make_string_delimiter_spec("\"", "\\", NewlineSupport::Unescaped),
-                make_string_delimiter_spec("'", "\\", NewlineSupport::Unescaped),
+                make_string_delimiter_spec("\"", "\\", NewlineSupport::Escaped),
+                make_string_delimiter_spec("'", "\\", NewlineSupport::Escaped),
             ],
             None,
             SpecialCase::TemplateLiteral,
@@ -501,8 +506,10 @@ pub fn get_language_lexer_vec() -> Vec<LanguageLexer> {
         ),
         // ### [V](https://vlang.io/)
         make_language_lexer(
-            // Ace doesn't support V yet.
-            "",
+            // CodeMirror doesn't support V yet. Go ahead and include a name for
+            // the future.
+            "v",
+            // Note that this overlaps with Verilog.
             &["v"],
             // See
             // [Comments](https://github.com/vlang/v/blob/master/doc/docs.md#comments).

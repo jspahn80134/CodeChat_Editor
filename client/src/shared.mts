@@ -14,19 +14,19 @@
 // the CodeChat Editor. If not, see
 // [http://www.gnu.org/licenses](http://www.gnu.org/licenses).
 //
-// `shared_types.mts` -- Shared type definitions
-// =============================================================================
+// `shared.mts` -- Shared definitions
+// =============================================
 //
 // The time, in ms, to wait between the last user edit and sending updated data
 // to the Server.
 export const autosave_timeout_ms = 300;
 
 // Produce a whole random number. Fractional numbers aren't consistently
-// converted to the same number. Note that the mantissa of a JavaScript `Number`
+// converted to the same number across JavaScript and Rust. Note that the mantissa of a JavaScript `Number`
 // is 53 bits per the
 // [docs](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Number#number_encoding).
-// To be certain, also round the result.
-export const rand = () => Math.round(Math.random() * 2 ** 53);
+// To be certain, also floor the result.
+export const rand = () => Math.floor(Math.random() * 2 ** 53);
 
 // ### Message types
 //

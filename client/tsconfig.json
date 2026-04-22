@@ -15,7 +15,7 @@
 // [http://www.gnu.org/licenses](http://www.gnu.org/licenses).
 //
 // tsconfig.json -- TypeScript configuration
-// =============================================================================
+// =========================================
 {
     "compilerOptions": {
         "allowJs": true,
@@ -33,7 +33,9 @@
         "outDir": "out",
         "rootDir": "./src",
         "strict": true,
-        // Starting in TypeScript 6.0, no ambient type packages are auto-included. Add these explicitly. See the [TypeScript 5.x to 6.0 Migration Guide](https://gist.github.com/privatenumber/3d2e80da28f84ee30b77d53e1693378f#16-types-defaults-to-).
+        // Starting in TypeScript 6.0, no ambient type packages are
+        // auto-included. Add these explicitly. See the
+        // [TypeScript 5.x to 6.0 Migration Guide](https://gist.github.com/privatenumber/3d2e80da28f84ee30b77d53e1693378f#16-types-defaults-to-).
         "types": ["node", "mocha"]
     },
     "exclude": ["node_modules", "static", "HashReader.js", "eslint.config.js"]

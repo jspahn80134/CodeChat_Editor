@@ -17,7 +17,7 @@ CodeChat Editor. If not, see
 [http://www.gnu.org/licenses/](http://www.gnu.org/licenses/).
 
 Implementation
-================================================================================
+==============
 
 ### System architecture
 
@@ -65,7 +65,7 @@ a diagram as an overview might be helpful. Perhaps the server, client, etc.
 should have its of readme files providing some of this.
 
 <a id="an-implementation"></a>Architecture
---------------------------------------------------------------------------------
+------------------------------------------
 
 Overall, the code is something like this:
 
@@ -317,7 +317,7 @@ More complex IDE integration: everything that the simple IDE does, plus the
 ability to toggle between the IDE's editor and the CodeChat Editor.
 
 Build system
---------------------------------------------------------------------------------
+------------
 
 The app needs build support because of complexity:
 
@@ -329,7 +329,7 @@ So, this project contains Rust code to automate this process -- see the
 [builder](../builder/Cargo.toml).
 
 Misc topics
---------------------------------------------------------------------------------
+-----------
 
 ### <a id="Client-simple-viewer"></a>CodeChat Editor Client Viewer Types
 
@@ -359,7 +359,7 @@ closing tags are removed from the HTML. This is fixed by later HTML processing
 steps (currently, by TinyMCE), which properly closes tags.
 
 Future work
---------------------------------------------------------------------------------
+-----------
 
 ### Table of contents
 
@@ -422,7 +422,7 @@ with descriptions of each setting.
 * Substitutions
 
 <a id="core-developmnt-priorities"></a>Core development priorities
---------------------------------------------------------------------------------
+------------------------------------------------------------------
 
 1. Bug fixes
 2. Book support
@@ -462,7 +462,7 @@ with descriptions of each setting.
   somewhat, since it wants to decode JSON into a V struct.)
 
 Organization
---------------------------------------------------------------------------------
+------------
 
 ### Client
 
@@ -508,7 +508,7 @@ TODO: GUIs using TinyMCE. See the
 [how-to guide](https://www.tiny.cloud/docs/tinymce/6/dialog-components/#panel-components).
 
 Code style
---------------------------------------------------------------------------------
+----------
 
 JavaScript functions are a
 [disaster](https://dmitripavlutin.com/differences-between-arrow-and-regular-functions/).
@@ -518,7 +518,7 @@ Other than that, follow the
 [MDN style guide](https://developer.mozilla.org/en-US/docs/MDN/Writing_guidelines/Writing_style_guide/Code_style_guide/JavaScript).
 
 Client modes
---------------------------------------------------------------------------------
+------------
 
 The CodeChat Editor client supports four modes:
 
@@ -535,7 +535,7 @@ The CodeChat Editor client supports four modes:
     area; otherwise, it's only the main area. See: \<gather here>.
 
 Misc
---------------------------------------------------------------------------------
+----
 
 Eventually, provide a read-only mode with possible auth (restrict who can view)
 using JWTs; see

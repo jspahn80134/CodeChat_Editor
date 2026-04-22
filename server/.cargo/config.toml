@@ -1,11 +1,11 @@
 # `config` - a Cargo configuration file
-# ==============================================================================
+# =====================================
 #
 # See the [docs](https://doc.rust-lang.org/cargo/reference/config.html) for this
 # file.
 #
 # ts\_rs config
-# ------------------------------------------------------------------------------
+# -------------
 #
 # Configure the directory where `ts-rs` places the generated files per the docs.
 # See also the

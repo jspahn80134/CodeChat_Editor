@@ -15,7 +15,7 @@
 // [http://www.gnu.org/licenses](http://www.gnu.org/licenses).
 //
 // `graphviz-webcomponent-setup.mts` -- Configure graphviz webcomponent options
-// =============================================================================
+// ============================================================================
 //
 // Configure the Graphviz web component to load the (large) renderer only when a
 // Graphviz web component is found on a page. See the

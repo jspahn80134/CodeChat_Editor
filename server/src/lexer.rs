@@ -15,13 +15,13 @@
 // [http://www.gnu.org/licenses](http://www.gnu.org/licenses).
 mod pest_parser;
 /// `lexer.rs` -- Lex source code into code and doc blocks
-/// ============================================================================
+/// ======================================================
 // Submodule definitions
-// -----------------------------------------------------------------------------
+// ---------------------
 pub mod supported_languages;
 
 // Imports
-// -----------------------------------------------------------------------------
+// -------
 //
 // ### Standard library
 #[cfg(feature = "lexer_explain")]
@@ -36,7 +36,7 @@ use regex::Regex;
 use supported_languages::get_language_lexer_vec;
 
 /// Data structures
-/// ----------------------------------------------------------------------------
+/// ---------------
 ///
 /// ### Language definition
 ///
@@ -49,7 +49,7 @@ use supported_languages::get_language_lexer_vec;
 ///   so, must newlines be escaped?
 /// * It defines heredocs in a flexible form (see `HeredocDelim` for more
 ///   details).
-/// * It associates an Ace mode and filename extensions with the lexer.
+/// * It associates a CodeMirror mode and filename extensions with the lexer.
 ///
 /// This lexer ignores line continuation characters; in C/C++/Python, it's a `\`
 /// character followed immediately by a newline
@@ -59,7 +59,7 @@ use supported_languages::get_language_lexer_vec;
 ///
 /// 1. It would allow the lexer to recognize the following C/C++ snippet as a
 ///    doc block: `// This is an odd\` `two-line inline comment.` However, this
-///    such such unusual syntax (most authors would instead use either a block
+///    is such unusual syntax (most authors would instead use either a block
 ///    comment or another inline comment) that recognizing it adds little value.
 /// 2. I'm unaware of any valid syntax in which ignoring a line continuation
 ///    would cause the lexer to mis-recognize code as a comment. (Escaped
@@ -185,7 +185,7 @@ pub struct LanguageLexersCompiled {
     pub language_lexer_compiled_vec: Vec<Arc<LanguageLexerCompiled>>,
     // Maps a file extension to indices into the lexers vector.
     pub map_ext_to_lexer_vec: HashMap<Arc<String>, Vec<Arc<LanguageLexerCompiled>>>,
-    // Maps an Ace mode to an index into the lexers vector.
+    // Maps a CodeMirror mode to an index into the lexers vector.
     pub map_mode_to_lexer: HashMap<Arc<String>, Arc<LanguageLexerCompiled>>,
 }
 
@@ -260,7 +260,7 @@ pub enum CodeDocBlock {
 }
 
 // Globals
-// -----------------------------------------------------------------------------
+// -------
 //
 // Create constant regexes needed by the lexer, following the
 // [Regex docs recommendation](https://docs.rs/regex/1.6.0/regex/index.html#example-avoid-compiling-the-same-regex-in-a-loop).
@@ -323,7 +323,7 @@ fn build_lexer_regex(
     let mut regex_builder = |//
                              // An array of alternative delimiters, which will
                              // be combined with a regex or (`|`) operator.
-                             string_arr: &Vec<String>,
+                             string_arr: &[String],
                              // The type of delimiter in `string_arr`.
                              regex_delim_type: RegexDelimType| {
         // If there are no delimiters, then there's nothing to do.
@@ -339,11 +339,9 @@ fn build_lexer_regex(
 
     // Add the opening block comment delimiter to the overall regex; add the
     // closing block comment delimiter to the map for the corresponding group.
-    let mut block_comment_opening_delim: Vec<String> = vec!["".to_string()];
     for block_comment_delim in &language_lexer.block_comment_delim_arr {
-        block_comment_opening_delim[0].clone_from(&block_comment_delim.opening);
         regex_builder(
-            &block_comment_opening_delim,
+            std::slice::from_ref(&block_comment_delim.opening),
             // Determine the block closing regex:
             RegexDelimType::BlockComment(
                 Regex::new(&if block_comment_delim.is_nestable {
@@ -363,7 +361,7 @@ fn build_lexer_regex(
         );
     }
     regex_builder(
-        &language_lexer.inline_comment_delim_arr.to_vec(),
+        &language_lexer.inline_comment_delim_arr,
         RegexDelimType::InlineComment,
     );
     // Build regexes for each string delimiter.
@@ -494,7 +492,7 @@ fn build_lexer_regex(
         }
         .unwrap();
         regex_builder(
-            &[regex::escape(&string_delim_spec.delimiter)].to_vec(),
+            std::slice::from_ref(&string_delim_spec.delimiter),
             RegexDelimType::String(end_of_string_regex),
         );
     }
@@ -504,7 +502,7 @@ fn build_lexer_regex(
         // A C# verbatim string has asymmetric opening and closing delimiters,
         // making it a special case.
         SpecialCase::CSharpVerbatimStringLiteral => regex_builder(
-            &vec!["@\"".to_string()],
+            &["@\"".to_string()],
             RegexDelimType::String(Regex::new(C_SHARP_VERBATIM_STRING_CLOSING).unwrap()),
         ),
         SpecialCase::TemplateLiteral => {
@@ -519,7 +517,7 @@ fn build_lexer_regex(
             //
             // TODO: match either an unescaped `${` -- which causes a nested
             // parse -- or the closing backtick (which must be unescaped).
-            regex_builder(&vec!["`".to_string()], RegexDelimType::TemplateLiteral);
+            regex_builder(&["`".to_string()], RegexDelimType::TemplateLiteral);
         }
         SpecialCase::Matlab => {
             // MATLAB supports block comments, when the comment delimiters
@@ -596,7 +594,7 @@ fn build_lexer_regex(
 }
 
 // Compile lexers
-// -----------------------------------------------------------------------------
+// --------------
 pub fn compile_lexers(language_lexer_arr: Vec<LanguageLexer>) -> LanguageLexersCompiled {
     let mut language_lexers_compiled = LanguageLexersCompiled {
         language_lexer_compiled_vec: Vec::new(),
@@ -634,7 +632,7 @@ pub fn compile_lexers(language_lexer_arr: Vec<LanguageLexer>) -> LanguageLexersC
 }
 
 /// Source lexer
-/// ----------------------------------------------------------------------------
+/// ------------
 ///
 /// This lexer categorizes source code into code blocks or doc blocks.
 ///
@@ -687,6 +685,10 @@ pub fn source_lexer(
     // Provide a method to intelligently append to the code/doc block vec. Empty
     // appends are ignored; appends of the same type append to `contents`
     // instead of creating a new entry.
+    //
+    // See if we have a PEG-based parser for this language; use that if
+    // available. This parser normalizes line endings on its own, so don't
+    // normalize here.
     if let Some(parser) = language_lexer_compiled.language_lexer.parser {
         return parser(source_code);
     }
@@ -1011,15 +1013,13 @@ pub fn source_lexer(
                         // strings/heredocs, in particular) until we leave the
                         // nested comment block. Therefore, keep track of the
                         // nesting depth; when this returns to 0, we've found
-                        // outermost closing block comment delimiter, and can
-                        // return to normal parsing. At this point in the code,
-                        // we've found one opening block comment delimiter, so
-                        // the nesting depth starts at 1.
-                        let mut nesting_depth = 1;
-                        let mut loop_count = 0;
+                        // the outermost closing block comment delimiter, and
+                        // can return to normal parsing. At this point in the
+                        // code, we've found one opening block comment
+                        // delimiter, so the nesting depth starts at 1.
+                        let mut nesting_depth: u32 = 1;
                         // Loop until we've outside all nested block comments.
-                        while nesting_depth != 0 && loop_count < 10 {
-                            loop_count += 1;
+                        while nesting_depth != 0 {
                             // Get the index of the next block comment
                             // delimiter.
                             #[cfg(feature = "lexer_explain")]
@@ -1079,7 +1079,7 @@ pub fn source_lexer(
                                     opening_delimiter.start(),
                                     opening_delimiter.len()
                                 );
-                                source_code_unlexed_index +=
+                                source_code_unlexed_index =
                                     comment_start_index + opening_delimiter.start();
                                 comment_start_index =
                                     source_code_unlexed_index + opening_delimiter.len();
@@ -1091,8 +1091,8 @@ pub fn source_lexer(
                                 continue;
                             } else {
                                 // This is a closing comment delimiter.
+                                assert!(nesting_depth > 0);
                                 nesting_depth -= 1;
-                                assert!(nesting_depth >= 0);
                                 let closing_delimiter_match = if delimiter_captures.len() == 3 {
                                     delimiter_captures.get(2).unwrap()
                                 } else {
@@ -1103,10 +1103,9 @@ pub fn source_lexer(
                                 // then mark this text as code and continue the
                                 // loop.
                                 if !last_delimiter_was_opening {
-                                    source_code_unlexed_index += comment_start_index
+                                    source_code_unlexed_index = comment_start_index
                                         + closing_delimiter_match.start()
                                         + closing_delimiter_match.len();
-                                    last_delimiter_was_opening = false;
                                     #[cfg(feature = "lexer_explain")]
                                     println!(
                                         "Found a non-innermost closing block comment delimiter. Nesting depth: {}",
@@ -1114,6 +1113,12 @@ pub fn source_lexer(
                                     );
                                     continue;
                                 }
+                                // Now that we've used this variable to
+                                // determine that the current comment is a doc
+                                // block, update it: this is a closing
+                                // delimited, so the last delimiter for the next
+                                // iteration is not an opening delimiter.
+                                last_delimiter_was_opening = false;
 
                                 // Otherwise, this is a potential doc block:
                                 // it's an innermost nested block comment. See
@@ -1441,7 +1446,7 @@ pub fn source_lexer(
 }
 
 // Tests
-// -----------------------------------------------------------------------------
+// -----
 //
 // Rust
 // [almost mandates](https://doc.rust-lang.org/book/ch11-03-test-organization.html)

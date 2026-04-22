@@ -15,7 +15,7 @@
 // [http://www.gnu.org/licenses](http://www.gnu.org/licenses).
 //
 // `python.pest` - Pest parser definition for Python
-// =============================================================================
+// =================================================
 doc_block = _{ inline_comment }
 
 // Per the
@@ -25,7 +25,7 @@ doc_block = _{ inline_comment }
 white_space = { (" " | "\t")* }
 
 // Inline comments
-// -----------------------------------------------------------------------------
+// ---------------
 inline_comment_delims  = _{ inline_comment_delim_0 }
 inline_comment_delim_0 =  { "#" }
 inline_comment_delim_1 =  { unused }
@@ -37,7 +37,7 @@ inline_comment_delim_2 =  { unused }
 inline_comment_char = { not_newline }
 
 // Block comments
-// -----------------------------------------------------------------------------
+// --------------
 //
 // Other languages support block comments; even though Python doesn't, the
 // following must be defined. Block comments never combine.
@@ -50,7 +50,7 @@ block_comment_closing_delim_1 = { unused }
 block_comment_closing_delim_2 = { unused }
 
 // Code blocks
-// -----------------------------------------------------------------------------
+// -----------
 code_line_token = _{ long_string | short_string | not_newline }
 long_string     = _{
     // The opening string delimiter.
@@ -73,7 +73,7 @@ short_string = _{
 }
 
 // Dedenter
-// -----------------------------------------------------------------------------
+// --------
 dedenter = { unused }
 
 /// CodeChat Editor lexer: cpp.

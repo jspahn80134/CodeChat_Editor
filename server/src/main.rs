@@ -13,16 +13,27 @@
 // You should have received a copy of the GNU General Public License along with
 // the CodeChat Editor. If not, see
 // [http://www.gnu.org/licenses](http://www.gnu.org/licenses).
-/// `main.rs` -- Entrypoint for the CodeChat Editor Server
-/// ============================================================================
+//! `main.rs` -- Entrypoint for the CodeChat Editor Server
+//! ======================================================
+//!
+//! This file implements the command-line interface (CLI) for the CodeChat
+//! Editor server binary. It provides three subcommands:
+//!
+//! - `serve`: Start the webserver in the foreground.
+//! - `start`: Spawn the webserver as a background child process, polling
+//!   until it responds to a ping, then optionally open a browser.
+//! - `stop`: Send a stop request to a running server instance.
+//!
+//! All subcommands accept `--host` and `--port` options to control the
+//! server's network address.
 // Imports
-// -----------------------------------------------------------------------------
+// -------
 //
 // ### Standard library
 use std::{
     env, fs,
     io::{self, Read},
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     ops::RangeInclusive,
     path::PathBuf,
     process::{Child, Command, Stdio},
@@ -39,7 +50,7 @@ use log::LevelFilter;
 use code_chat_editor::webserver::{self, Credentials, GetServerUrlError, path_to_url};
 
 // Data structures
-// -----------------------------------------------------------------------------
+// ---------------
 //
 // ### Command-line interface
 //
@@ -80,7 +91,7 @@ enum Commands {
         log: Option<LevelFilter>,
 
         /// Define the username:password used to limit access to the server. By
-        /// default, access is unlimited.
+        /// default, access is unlimited. The username may not contain a colon.-
         #[arg(short, long, value_parser = parse_credentials)]
         auth: Option<Credentials>,
     },
@@ -94,7 +105,7 @@ enum Commands {
 }
 
 // Code
-// -----------------------------------------------------------------------------
+// ----
 //
 // The following code implements the command-line interface for the CodeChat
 // Editor.
@@ -116,8 +127,7 @@ impl Cli {
                     addr,
                     credentials.clone(),
                     log.unwrap_or(LevelFilter::Info),
-                )
-                .unwrap();
+                )?;
             }
             Commands::Start { open } => {
                 // Poll the server to ensure it starts.
@@ -321,24 +331,23 @@ fn port_in_range(s: &str) -> Result<u16, String> {
 }
 
 fn parse_credentials(s: &str) -> Result<Credentials, String> {
-    let split_: Vec<_> = s.split(":").collect();
-    if split_.len() != 2 {
-        Err(format!(
-            "Unable to parse credentials as username:password; found {} colon-separated string(s), but expected 2",
-            split_.len()
-        ))
-    } else {
-        Ok(Credentials {
-            username: split_[0].to_string(),
-            password: split_[1].to_string(),
-        })
-    }
+    // For simplicity, require a username to have no colons.
+    let split: Vec<_> = s.splitn(2, ":").collect();
+    Ok(Credentials {
+        username: split[0].to_string(),
+        password: split[1].to_string(),
+    })
 }
 
+/// This is used by `ping` to transform the "access connections from any address" address into localhost, a valid destination address for a ping.
 fn fix_addr(addr: &SocketAddr) -> SocketAddr {
     if addr.ip() == IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)) {
         let mut addr = *addr;
-        addr.set_ip(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
+        addr.set_ip(IpAddr::V4(Ipv4Addr::LOCALHOST));
+        addr
+    } else if addr.ip() == IpAddr::V6(Ipv6Addr::UNSPECIFIED) {
+        let mut addr = *addr;
+        addr.set_ip(IpAddr::V6(Ipv6Addr::LOCALHOST));
         addr
     } else {
         *addr
@@ -356,7 +365,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[tokio::main]
 async fn get_server_url(port: u16) -> Result<String, GetServerUrlError> {
-    return code_chat_editor::webserver::get_server_url(port).await;
+    code_chat_editor::webserver::get_server_url(port).await
 }
 
 #[cfg(test)]

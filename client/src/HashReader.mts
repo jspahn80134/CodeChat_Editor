@@ -15,7 +15,7 @@
 // [http://www.gnu.org/licenses](http://www.gnu.org/licenses).
 //
 // `HashReader.mts` -- post-process esbuild output
-// =============================================================================
+// ===============================================
 //
 // This script reads the output produced by esbuild to determine the location of
 // the bundled files, which have hashes in their file names. It writes these
@@ -59,7 +59,8 @@ interface Metafile {
     };
 }
 
-// Load the esbuild metafile.
+// Load the esbuild metafile. This must always be run from the `client/`
+// directory.
 const data = await fs.readFile("meta.json", { encoding: "utf8" });
 
 // Interpret it as JSON.
@@ -68,36 +69,37 @@ const metafile: Metafile = JSON.parse(data);
 // Walk the file, looking for the names of specific entry points. Transform
 // those into paths used to import these files.
 const outputContents: Record<string, string> = {};
-let num_found = 0;
+let numFound = 0;
 for (const output in metafile.outputs) {
     const outputInfo = metafile.outputs[output];
     switch (outputInfo.entryPoint) {
         case "src/CodeChatEditorFramework.mts":
             outputContents["CodeChatEditorFramework.js"] = output;
-            ++num_found;
+            ++numFound;
             break;
 
         case "src/CodeChatEditor.mts":
             outputContents["CodeChatEditor.js"] = output;
             outputContents["CodeChatEditor.css"] = outputInfo.cssBundle!;
-            ++num_found;
+            ++numFound;
             break;
 
         case "src/CodeChatEditor-test.mts":
             outputContents["CodeChatEditor-test.js"] = output;
             outputContents["CodeChatEditor-test.css"] = outputInfo.cssBundle!;
-            ++num_found;
+            ++numFound;
             break;
 
         case "src/css/CodeChatEditorProject.css":
             outputContents["CodeChatEditorProject.css"] = output;
-            ++num_found;
+            ++numFound;
             break;
     }
 }
 
-console.assert(num_found === 4);
-
+if (numFound !== 4) {
+    throw new Error(`Expected 4 entry points, found ${numFound}`);
+}
 // Write this to disk.
 await fs.writeFile(
     "../server/hashLocations.json",

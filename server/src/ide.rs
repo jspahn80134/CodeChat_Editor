@@ -13,13 +13,29 @@
 // You should have received a copy of the GNU General Public License along with
 // the CodeChat Editor. If not, see
 // [http://www.gnu.org/licenses](http://www.gnu.org/licenses).
-/// `ide.rs` -- Provide interfaces with common IDEs
-/// ============================================================================
+//! `ide.rs` -- Provide interfaces with common IDEs
+//! ===============================================
+//!
+//! This module bridges IDE extensions and the CodeChat Editor's core server.
+//! Its central type, `CodeChatEditorServer`, starts the Actix web server in a
+//! dedicated OS thread (isolating its async runtime from the IDE's own runtime)
+//! and exposes a typed message-passing interface for the extension to use:
+//!
+//! - **`send_message_*`** methods push editor events (file opened, file
+//!   changed, cursor moved, …) into the server's translation pipeline.
+//! - **`get_message`** / **`get_message_timeout`** retrieve responses from the
+//!   server (including synthetic timeout errors for unacknowledged messages).
+//! - **`stop_server`** gracefully shuts the server down.
+//!
+//! All internal fields are private so that IDE extensions are forced to use
+//! only this public interface, hiding the implementation details of the server.
+//! Sub-modules (`filewatcher` — file watcher support, `vscode`) contain
+//! IDE-specific logic.
 pub mod filewatcher;
 pub mod vscode;
 
 // Imports
-// -----------------------------------------------------------------------------
+// -------
 //
 // ### Standard library
 use std::{
@@ -57,7 +73,7 @@ use crate::{
 };
 
 // Code
-// -----------------------------------------------------------------------------
+// ----
 //
 // Using this macro is critical -- otherwise, the Actix system doesn't get
 // correctly initialized, which makes calls to `actix_rt::spawn` fail. In
@@ -87,6 +103,7 @@ pub struct CodeChatEditorServer {
 }
 
 impl CodeChatEditorServer {
+    // Creating the server could fail, so this must return an `io::Result`.
     pub fn new() -> std::io::Result<CodeChatEditorServer> {
         // Start the server.
         let (server, app_state) = setup_server(
@@ -100,11 +117,8 @@ impl CodeChatEditorServer {
         let connection_id_raw = random::<u64>().to_string();
         let connection_id = connection_id_raw_to_str(&connection_id_raw);
         let app_state_task = app_state.clone();
-        let translation_queues = create_translation_queues(
-            connection_id_raw_to_str(connection_id_raw.as_str()),
-            &app_state,
-        )
-        .map_err(|err| std::io::Error::other(format!("Unable to create queues: {err}")))?;
+        let translation_queues = create_translation_queues(connection_id.clone(), &app_state)
+            .map_err(|err| std::io::Error::other(format!("Unable to create queues: {err}")))?;
         thread::spawn(move || {
             start_server(
                 connection_id_raw,
@@ -177,7 +191,7 @@ impl CodeChatEditorServer {
     }
 
     // Send the provided message contents; add in an ID and add this to the list
-    // of pending messages. This produces a timeout of a matching `Result`
+    // of pending messages. This produces a timeout if a matching `Result`
     // message isn't received with the timeout.
     async fn send_message_timeout(
         &self,
@@ -270,6 +284,8 @@ impl CodeChatEditorServer {
             is_re_translation: false,
             contents: option_contents.map(|contents| CodeChatForWeb {
                 metadata: SourceFileMetadata {
+                    // The IDE doesn't need to provide the `mode`; this will
+                    // determined by the server.
                     mode: "".to_string(),
                 },
                 source: CodeMirrorDiffable::Plain(CodeMirror {
@@ -316,11 +332,11 @@ impl CodeChatEditorServer {
     // This returns after the server shuts down.
     pub async fn stop_server(&self) {
         self.server_handle.stop(true).await;
-        // Stop all running timers.
+        // Since the server is closing, don't report any expired message.
+        self.expired_messages_rx.lock().await.close();
+        // Stop all running timers, now that no new messages will arrive.
         for (_id, join_handle) in self.pending_messages.lock().await.drain() {
             join_handle.abort();
         }
-        // Since the server is closing, don't report any expired message.
-        self.expired_messages_rx.lock().await.close();
     }
 }

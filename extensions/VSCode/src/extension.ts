@@ -47,7 +47,7 @@ import {
     MessageResult,
     rand,
     UpdateMessageContents,
-} from "../../../client/src/shared_types.mjs";
+} from "../../../client/src/shared.mjs";
 import {
     DEBUG_ENABLED,
     MAX_MESSAGE_LENGTH,
@@ -730,8 +730,15 @@ export const activate = (context: vscode.ExtensionContext) => {
 
                             const scroll_line = current_update.scroll_position;
                             if (scroll_line !== undefined && editor) {
-                                ignore_selection_change = true;
-                                const scroll_position = new vscode.Position(scroll_line - 1, 0);
+                                // Don't set `ignore_selection_change` here:
+                                // `revealRange` doesn't change the editor's
+                                // text selection.
+                                const scroll_position = new vscode.Position(
+                                    // The VSCode line is zero-based; the
+                                    // CodeMirror line is one-based.
+                                    scroll_line - 1,
+                                    0,
+                                );
                                 editor.revealRange(
                                     new vscode.Range(scroll_position, scroll_position),
                                     TextEditorRevealType.AtTop,
@@ -745,6 +752,12 @@ export const activate = (context: vscode.ExtensionContext) => {
                                 editor.selections = [
                                     new vscode.Selection(cursor_position, cursor_position),
                                 ];
+                                // I'd prefer to set `ignore_selection_change =
+                                // false` here, but even doing so after a
+                                // `setTimeout(..., 0)` doesn't work; evidently,
+                                // the event is generated at some later time.
+                                // Instead, depend on the event to always clear
+                                // this flag (a source of potential bugs).
                             }
                             await sendResult(id);
                             break;
@@ -803,9 +816,7 @@ export const activate = (context: vscode.ExtensionContext) => {
                         case "Result": {
                             const result_contents = value as MessageResult;
                             if ("Err" in result_contents) {
-                                const err = result_contents[
-                                    "Err"
-                                ] as ResultErrTypes;
+                                const err = result_contents["Err"];
                                 if (
                                     err instanceof Object &&
                                     "OutOfSync" in err
@@ -816,11 +827,10 @@ export const activate = (context: vscode.ExtensionContext) => {
                                     );
                                     send_update(true);
                                 } else {
-                                    // If the client is out of sync, re-sync it.
-                                    if (result_contents)
-                                        show_error(
-                                            `Error in message ${id}: ${JSON.stringify(err)}`,
-                                        );
+                                    // Report the error.
+                                    show_error(
+                                        `Error in message ${id}: ${JSON.stringify(err)}`,
+                                    );
                                 }
                             }
                             break;

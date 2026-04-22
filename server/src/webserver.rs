@@ -14,17 +14,18 @@
 // the CodeChat Editor. If not, see
 // [http://www.gnu.org/licenses](http://www.gnu.org/licenses).
 /// `webserver.rs` -- Serve CodeChat Editor Client webpages
-/// ============================================================================
+/// =======================================================
 // Submodules
-// -----------------------------------------------------------------------------
+// ----------
 #[cfg(test)]
 pub mod tests;
 
 // Imports
-// -----------------------------------------------------------------------------
+// -------
 //
 // ### Standard library
 use std::{
+    borrow::Cow,
     collections::{HashMap, HashSet},
     env, fs, io,
     net::SocketAddr,
@@ -53,6 +54,7 @@ use actix_ws::AggregatedMessage;
 use bytes::Bytes;
 use dunce::simplified;
 use futures_util::StreamExt;
+use htmlize::{escape_attribute, escape_text};
 use indoc::{concatdoc, formatdoc};
 use lazy_static::lazy_static;
 use log::{LevelFilter, error, info, warn};
@@ -100,7 +102,7 @@ use crate::capture::{CaptureConfig, CaptureEvent, EventCapture};
 use chrono::Utc;
 
 // Data structures
-// -----------------------------------------------------------------------------
+// ---------------
 //
 // ### Data structures supporting a websocket connection between the IDE, this
 //
@@ -110,6 +112,7 @@ use chrono::Utc;
 pub struct WebsocketQueues {
     pub from_websocket_tx: Sender<EditorMessage>,
     pub to_websocket_rx: Receiver<EditorMessage>,
+    pub pending_messages: HashMap<u64, JoinHandle<()>>,
 }
 
 #[derive(Debug)]
@@ -335,7 +338,7 @@ pub enum IdeType {
     /// should be hosted in an external browser.
     VSCode(bool),
     /// Another option -- temporary -- to allow for future expansion.
-    DeleteMe,
+    Other,
 }
 
 /// Contents of the `Update` message.
@@ -343,7 +346,7 @@ pub enum IdeType {
 #[ts(export, optional_fields)]
 pub struct UpdateMessageContents {
     /// The filesystem path to this file. This is only used by the IDE to
-    /// determine which file to apply Update contents to. The Client stores then
+    /// determine which file to apply Update contents to. The Client stores this
     /// then sends it back to the IDE in `Update` messages. This helps deal with
     /// transition times when the IDE and Client have different files loaded,
     /// guaranteeing to updates are still applied to the correct file.
@@ -375,15 +378,15 @@ pub struct AppState {
     /// The number of the next connection ID to assign for the filewatcher.
     pub filewatcher_next_connection_id: Mutex<u32>,
     /// The port this server listens on.
-    pub port: Arc<Mutex<u16>>,
+    pub port: Mutex<u16>,
     /// For each connection ID, store a queue tx for the HTTP server to send
     /// requests to the processing task for that ID.
-    pub processing_task_queue_tx: Arc<Mutex<HashMap<String, Sender<ProcessingTaskHttpRequest>>>>,
+    pub processing_task_queue_tx: Mutex<HashMap<String, Sender<ProcessingTaskHttpRequest>>>,
     /// For each connection ID, store the queues for the IDE and Client.
     pub ide_queues: Arc<Mutex<HashMap<String, WebsocketQueues>>>,
     pub client_queues: Arc<Mutex<HashMap<String, WebsocketQueues>>>,
     /// Connection IDs that are currently in use.
-    pub connection_id: Arc<Mutex<HashSet<String>>>,
+    pub connection_id: Mutex<HashSet<String>>,
     /// The auth credentials if authentication is used.
     credentials: Option<Credentials>,
     // Added to support capture - JDS - 11/2025
@@ -428,7 +431,7 @@ pub struct CaptureEventWire {
 }
 
 // Macros
-// -----------------------------------------------------------------------------
+// ------
 /// Create a macro to report an error when enqueueing an item.
 #[macro_export]
 macro_rules! queue_send {
@@ -457,13 +460,13 @@ macro_rules! queue_send_func {
 }
 
 /// Globals
-/// ----------------------------------------------------------------------------
+/// -------
 // The timeout for a reply from a websocket, in ms. Use a short timeout to speed
 // up unit tests.
 pub const REPLY_TIMEOUT_MS: Duration = if cfg!(test) {
     Duration::from_millis(500)
 } else {
-    Duration::from_millis(1500000)
+    Duration::from_millis(15000)
 };
 
 /// The time to wait for a pong from the websocket in response to a ping sent by
@@ -540,13 +543,16 @@ lazy_static! {
         #[cfg(debug_assertions)]
         hl.push("server");
         hl.push("hashLocations.json");
-        let json = fs::read_to_string(hl.clone()).unwrap_or_else(|_| format!(r#"{{"error": "Unable to read {:#?}"}}"#, hl.to_string_lossy()));
-        let hmm: HashMap<String, String> = serde_json::from_str(&json).unwrap_or_else(|_| HashMap::new());
+        let json = fs::read_to_string(hl.clone()).unwrap_or_else(
+            |err| panic!("Error: Unable to read {:#?}: {err}", hl.to_string_lossy())
+        );
+        let hmm: HashMap<String, String> =
+            serde_json::from_str(&json).unwrap_or_else(|_| panic!("Unable to parse JSON in {:#?}", hl.to_string_lossy()));
         hmm
     };
 
-    static ref CODECHAT_EDITOR_FRAMEWORK_JS: String = BUNDLED_FILES_MAP.get("CodeChatEditorFramework.js").cloned().unwrap_or("Not found".to_string());
-    static ref CODECHAT_EDITOR_PROJECT_CSS: String = BUNDLED_FILES_MAP.get("CodeChatEditorProject.css").cloned().unwrap_or("Not found".to_string());
+    static ref CODECHAT_EDITOR_FRAMEWORK_JS: String = BUNDLED_FILES_MAP.get("CodeChatEditorFramework.js").cloned().expect("Unable to find framework JS in bundled files map.");
+    static ref CODECHAT_EDITOR_PROJECT_CSS: String = BUNDLED_FILES_MAP.get("CodeChatEditorProject.css").cloned().expect("Unable to find project CSS in bundled files map.");
 }
 
 // Define the location of the root path, which contains `static/`, `log4rs.yml`,
@@ -563,8 +569,10 @@ pub fn set_root_path(
     let exe_dir = if let Some(ed) = extension_base_path {
         ed
     } else {
-        exe_path = env::current_exe().unwrap();
-        exe_path.parent().unwrap()
+        exe_path = env::current_exe().expect("Unable to determine path to current executable.");
+        exe_path
+            .parent()
+            .expect("Unable to find directory name containing the current executable.")
     };
     #[cfg(not(any(test, debug_assertions)))]
     let root_path = PathBuf::from(exe_dir);
@@ -592,7 +600,7 @@ pub fn set_root_path(
 }
 
 // Webserver functionality
-// -----------------------------------------------------------------------------
+// -----------------------
 #[get("/ping")]
 async fn ping() -> HttpResponse {
     HttpResponse::Ok().body("pong")
@@ -749,12 +757,14 @@ pub async fn filesystem_endpoint(
     // it here.
     #[cfg(not(target_os = "windows"))]
     let fixed_file_path = format!("/{request_file_path}");
+    // TODO: security: ensure the resulting path is within the current project /
+    // some expected directory.
     let file_path = match try_canonicalize(&fixed_file_path) {
         Ok(v) => v,
         Err(err) => {
             let msg = format!("Error: unable to convert path {request_file_path}: {err}.");
             error!("{msg}");
-            return html_not_found(&msg);
+            return http_not_found(&msg);
         }
     };
 
@@ -771,8 +781,8 @@ pub async fn filesystem_endpoint(
         .is_ok_and(|query| query.get("raw").is_some());
     let is_test_mode = get_test_mode(req);
     let flags = if is_toc {
-        // Both flags should never be set.
-        assert!(!is_raw);
+        // This ignores the raw flag if it's set; since this makes not sense,
+        // this is ignored.
         ProcessingTaskHttpRequestFlags::Toc
     } else if is_raw {
         ProcessingTaskHttpRequestFlags::Raw
@@ -793,7 +803,7 @@ pub async fn filesystem_endpoint(
                 &connection_id
             );
             error!("{msg}");
-            return html_not_found(&msg);
+            return http_not_found(&msg);
         };
         processing_tx.clone()
     };
@@ -811,7 +821,7 @@ pub async fn filesystem_endpoint(
     {
         let msg = format!("Error: unable to enqueue: {err}.");
         error!("{msg}");
-        return html_not_found(&msg);
+        return http_not_found(&msg);
     }
 
     // Return the response provided by the processing task.
@@ -820,7 +830,7 @@ pub async fn filesystem_endpoint(
             SimpleHttpResponse::Ok(body) => HttpResponse::Ok()
                 .content_type(ContentType::html())
                 .body(body),
-            SimpleHttpResponse::Err(body) => html_not_found(&format!("{body}")),
+            SimpleHttpResponse::Err(body) => http_not_found(&format!("{body}")),
             SimpleHttpResponse::Raw(body, content_type) => {
                 HttpResponse::Ok().content_type(content_type).body(body)
             }
@@ -834,11 +844,11 @@ pub async fn filesystem_endpoint(
                         }
                         v.into_response(req)
                     }
-                    Err(err) => html_not_found(&format!("<p>Error opening file {path:?}: {err}.",)),
+                    Err(err) => http_not_found(&format!("Error opening file {path:?}: {err}.",)),
                 }
             }
         },
-        Err(err) => html_not_found(&format!("Error: {err}")),
+        Err(err) => http_not_found(&format!("Error: {err}")),
     }
 }
 
@@ -893,7 +903,7 @@ pub async fn file_to_response(
             None,
         );
     };
-    let name = escape_html(&file_name.to_string_lossy());
+    let name = escape_text(file_name.to_string_lossy());
 
     // Get the locations for bundled files.
     let js_test_suffix = if http_request.is_test_mode {
@@ -911,7 +921,7 @@ pub async fn file_to_response(
         );
     };
     let codechat_editor_css_name = format!("CodeChatEditor{js_test_suffix}.css");
-    let Some(codehat_editor_css) = BUNDLED_FILES_MAP.get(&codechat_editor_css_name) else {
+    let Some(codechat_editor_css) = BUNDLED_FILES_MAP.get(&codechat_editor_css_name) else {
         return (
             SimpleHttpResponse::Err(SimpleHttpResponseError::BundledFileNotFound(
                 codechat_editor_css_name,
@@ -961,7 +971,7 @@ pub async fn file_to_response(
         (
             format!(
                 r#"<nav id="CodeChat-sidebar-nav"><iframe src="{}?mode=toc" id="CodeChat-sidebar"></iframe></nav>"#,
-                path_to_toc.unwrap().to_slash_lossy()
+                escape_attribute(path_to_toc.unwrap().to_slash_lossy())
             ),
             format!(
                 r#"<link rel="stylesheet" href="/{}">"#,
@@ -995,11 +1005,12 @@ pub async fn file_to_response(
                     // as the query parameter.
                     format!(
                         r#"<iframe src="/static/pdfjs-main.html?{}" style="height: 100vh; border: 0px" id="CodeChat-contents"></iframe>"#,
-                        http_request.url
+                        escape_attribute(&http_request.url)
                     )
                 } else {
                     format!(
-                        r#"<iframe src="{file_name}?raw" style="height: 100vh" id="CodeChat-contents"></iframe>"#
+                        r#"<iframe src="{}?raw" style="height: 100vh" id="CodeChat-contents"></iframe>"#,
+                        escape_attribute(file_name)
                     )
                 },
             ),
@@ -1038,7 +1049,7 @@ pub async fn file_to_response(
                             <meta name="viewport" content="width=device-width, initial-scale=1">
                             <title>{name} - The CodeChat Editor</title>
                             {MATHJAX_TAGS}
-                            <link rel="stylesheet" href="/{codehat_editor_css}">
+                            <link rel="stylesheet" href="/{codechat_editor_css}">
                         </head>
                         <body class="CodeChat-theme-light">
                             <div class="CodeChat-TOC">
@@ -1082,7 +1093,7 @@ pub async fn file_to_response(
                     <title>{name} - The CodeChat Editor</title>
                     {MATHJAX_TAGS}
                     <script type="module">import "/{codechat_editor_js}"</script>
-                    <link rel="stylesheet" href="/{codehat_editor_css}">
+                    <link rel="stylesheet" href="/{codechat_editor_css}">
                     {sidebar_css}
                 </head>
                 <body class="CodeChat-theme-light">
@@ -1135,7 +1146,7 @@ fn make_simple_viewer(http_request: &ProcessingTaskHttpRequest, html: &str) -> S
             file_path.to_path_buf(),
         ));
     };
-    let file_name = escape_html(file_name);
+    let file_name = escape_text(file_name);
 
     let Some(path_to_toc) = find_path_to_toc(file_path) else {
         return SimpleHttpResponse::Err(SimpleHttpResponseError::PathNotProject(
@@ -1147,7 +1158,7 @@ fn make_simple_viewer(http_request: &ProcessingTaskHttpRequest, html: &str) -> S
             path_to_toc.to_path_buf(),
         ));
     };
-    let path_to_toc = escape_html(path_to_toc);
+    let path_to_toc = escape_text(path_to_toc);
 
     SimpleHttpResponse::Ok(
         // The JavaScript is a stripped-down version of
@@ -1196,7 +1207,7 @@ fn make_simple_viewer(http_request: &ProcessingTaskHttpRequest, html: &str) -> S
 }
 
 /// Websockets
-/// ----------------------------------------------------------------------------
+/// ----------
 ///
 /// Each CodeChat Editor IDE instance pairs with a CodeChat Editor Client
 /// through the CodeChat Editor Server. Together, these form a joint editor,
@@ -1221,17 +1232,18 @@ pub fn client_websocket(
         aggregated_msg_stream = aggregated_msg_stream.max_continuation_size(10_000_000);
 
         // Transfer the queues from the global state to this task.
-        let (from_websocket_tx, mut to_websocket_rx) =
+        let (from_websocket_tx, mut to_websocket_rx, mut pending_messages) =
             match websocket_queues.lock().unwrap().remove(&connection_id) {
-                Some(queues) => (queues.from_websocket_tx.clone(), queues.to_websocket_rx),
+                Some(queues) => (
+                    queues.from_websocket_tx.clone(),
+                    queues.to_websocket_rx,
+                    queues.pending_messages,
+                ),
                 None => {
                     error!("No websocket queues for connection id {connection_id}.");
                     return;
                 }
             };
-
-        // Keep track of pending messages.
-        let mut pending_messages: HashMap<u64, JoinHandle<()>> = HashMap::new();
 
         // Shutdown may occur in a controlled process or an immediate websocket
         // close. If the Client needs to close, it can simply close its
@@ -1438,18 +1450,19 @@ pub fn client_websocket(
             while let Some(m) = to_websocket_rx.recv().await {
                 warn!("Dropped queued message {m:?}");
             }
-            to_websocket_rx.close();
             // Stop all timers.
             for (_id, join_handle) in pending_messages.drain() {
                 join_handle.abort();
             }
         } else {
+            // Don't stop timers; the re-connection may handle them.
             info!("Websocket re-enqueued.");
             websocket_queues.lock().unwrap().insert(
                 connection_id.to_string(),
                 WebsocketQueues {
                     from_websocket_tx,
                     to_websocket_rx,
+                    pending_messages,
                 },
             );
         }
@@ -1461,7 +1474,7 @@ pub fn client_websocket(
 }
 
 // Webserver core
-// -----------------------------------------------------------------------------
+// --------------
 #[actix_web::main]
 pub async fn main(
     extension_base_path: Option<&Path>,
@@ -1540,13 +1553,9 @@ async fn basic_validator(
     credentials: BasicAuth,
 ) -> Result<ServiceRequest, (Error, ServiceRequest)> {
     // Get the provided credentials.
-    let expected_credentials = &req
-        .app_data::<WebAppState>()
-        .unwrap()
-        .credentials
-        .as_ref()
-        .unwrap();
-    if credentials.user_id() == expected_credentials.username
+    if let Some(app_state) = &req.app_data::<WebAppState>()
+        && let Some(expected_credentials) = app_state.credentials.as_ref()
+        && credentials.user_id() == expected_credentials.username
         && credentials.password() == Some(&expected_credentials.password)
     {
         Ok(req)
@@ -1614,11 +1623,11 @@ pub fn make_app_data(credentials: Option<Credentials>) -> WebAppState {
         server_handle: Mutex::new(None),
         filewatcher_next_connection_id: Mutex::new(0),
         // Use a dummy value until the server binds to a port.
-        port: Arc::new(Mutex::new(0)),
-        processing_task_queue_tx: Arc::new(Mutex::new(HashMap::new())),
+        port: Mutex::new(0),
+        processing_task_queue_tx: Mutex::new(HashMap::new()),
         ide_queues: Arc::new(Mutex::new(HashMap::new())),
         client_queues: Arc::new(Mutex::new(HashMap::new())),
-        connection_id: Arc::new(Mutex::new(HashSet::new())),
+        connection_id: Mutex::new(HashSet::new()),
         credentials,
         capture,
     })
@@ -1658,7 +1667,7 @@ where
 }
 
 // Utilities
-// -----------------------------------------------------------------------------
+// ---------
 //
 // Send a response to the client after processing a message from the client.
 pub async fn send_response(client_tx: &Sender<EditorMessage>, id: f64, result: MessageResult) {
@@ -1792,8 +1801,7 @@ pub fn try_canonicalize(file_path: &str) -> Result<PathBuf, TryCanonicalizeError
 pub fn path_to_url(prefix: &str, connection_id: Option<&str>, file_path: &Path) -> String {
     // First, convert the path to use forward slashes.
     let pathname = simplified(file_path)
-        .to_slash()
-        .unwrap()
+        .to_slash_lossy()
         // The convert each part of the path to a URL-encoded string. (This
         // avoids encoding the slashes.)
         .split("/")
@@ -1815,26 +1823,20 @@ pub fn path_to_url(prefix: &str, connection_id: Option<&str>, file_path: &Path) 
 // Given a string (which is probably a pathname), drop the leading slash if it's
 // present.
 pub fn drop_leading_slash(path_: &str) -> &str {
-    if path_.starts_with("/") {
-        let mut chars = path_.chars();
-        chars.next();
-        chars.as_str()
-    } else {
-        path_
-    }
+    path_.strip_prefix('/').unwrap_or(path_)
 }
 
 // Given a `Path`, transform it into a displayable HTML string (with any
 // necessary escaping).
-pub fn path_display(p: &Path) -> String {
-    escape_html(&simplified(p).to_string_lossy())
+pub fn path_display(p: &Path) -> Cow<'_, str> {
+    escape_text(simplified(p).to_string_lossy())
 }
 
-// Return a Not Found (404) error with the provided HTML body.
-pub fn html_not_found(msg: &str) -> HttpResponse {
+// Return a Not Found (404) error with the provided text (not HTML) body.
+pub fn http_not_found(msg: &str) -> HttpResponse {
     HttpResponse::NotFound()
         .content_type(ContentType::html())
-        .body(html_wrapper(msg))
+        .body(html_wrapper(&escape_text(msg)))
 }
 
 // Wrap the provided HTML body in DOCTYPE/html/head tags.
@@ -1853,15 +1855,6 @@ pub fn html_wrapper(body: &str) -> String {
             </body>
         </html>"#
     )
-}
-
-// Given text, escape it so it formats correctly as HTML. This is a translation
-// of Python's `html.escape` function.
-pub fn escape_html(unsafe_text: &str) -> String {
-    unsafe_text
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
 }
 
 // This lists all errors produced by calling `get_server_url`. TODO: rework and

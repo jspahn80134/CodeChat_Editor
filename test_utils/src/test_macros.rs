@@ -15,14 +15,14 @@
 /// [http://www.gnu.org/licenses](http://www.gnu.org/licenses).
 ///
 /// `test_macros.rs` -- Reusable macros for testing
-/// ============================================================================
+/// ===============================================
 // Imports
-// -----------------------------------------------------------------------------
+// -------
 //
 // None.
 //
 // Macros
-// -----------------------------------------------------------------------------
+// ------
 //
 // Extract a known enum variant or fail. More concise than the alternative (`if
 // let`, or `let else`). From [SO](https://stackoverflow.com/a/69324393). The
@@ -31,7 +31,7 @@
 macro_rules! cast {
     // For an enum containing a single value (the typical case).
     ($target: expr, $pat: path) => {{
-        // The `if let` exploits recent Rust compiler's smart pattern matching.
+        // The `if let` exploits the Rust compiler's smart pattern matching.
         // Contrary to other solutions like `into_variant` and friends, this one
         // macro covers all ownership usage like `self`, `&self` and `&mut
         // self`. On the other hand `{into,as,as_mut}_{variant}` solution
@@ -52,7 +52,11 @@ macro_rules! cast {
         if let $pat($($tup,)*) = $target {
             ($($tup,)*)
         } else {
-            panic!("mismatch variant when cast to {}", stringify!($pat));
+            panic!(
+                "mismatch variant when cast to {} with values {}",
+                stringify!($pat),
+                stringify!($tup)
+            );
         }
     }};
 }
@@ -62,23 +66,13 @@ macro_rules! cast {
 #[macro_export]
 macro_rules! function_name {
     () => {{
-        fn f() {}
-        fn type_name_of<T>(_: T) -> &'static str {
+        const fn f() {}
+        const fn type_name_of<T>(_: T) -> &'static str {
             std::any::type_name::<T>()
         }
         let name = type_name_of(f);
-        // Since we just called the nested function f, strip this off the end of
+        // Since we just called the nested function `f``, strip this off the end of
         // the returned value.
         name.strip_suffix("::f").unwrap()
-    }};
-}
-
-// Call `_prep_test_dir` with the correct parameter -- `function_name!()`.
-#[macro_export]
-macro_rules! prep_test_dir {
-    () => {{
-        use $crate::function_name;
-        use $crate::test_utils::_prep_test_dir;
-        _prep_test_dir(function_name!())
     }};
 }

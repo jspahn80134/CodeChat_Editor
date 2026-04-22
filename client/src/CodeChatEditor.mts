@@ -71,7 +71,7 @@ import {
     CodeMirror,
     autosave_timeout_ms,
     rand,
-} from "./shared_types.mjs";
+} from "./shared.mjs";
 import { show_toast } from "./show_toast.mjs";
 
 // ### CSS
@@ -257,10 +257,10 @@ const _open_lp = async (
         // Get the mode from the page's query parameters. Default to edit using
         // the
         // [nullish coalescing operator](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Nullish_coalescing_operator).
-        // TODO: this isn't typesafe, since the `mode` might not be a key of
-        // `EditorMode`.
-        /// @ts-expect-error("See above.")
-        const _editorMode = EditorMode[urlParams.get("mode") ?? "edit"];
+        const mode = urlParams.get("mode") ?? EditorMode.edit;
+        const _editorMode = Object.values(EditorMode).includes(mode)
+            ? mode
+            : EditorMode.edit;
 
         // Get the <code>[current_metadata](#current_metadata)</code> from the
         // provided `code_chat_for_web` struct and store it as a global
@@ -372,7 +372,11 @@ const _open_lp = async (
     }
 };
 
-const save_lp = async (is_dirty: boolean) => {
+const save_lp = async (
+    // Avoid relying on the global `is_dirty`, which may change during an
+    // `await`.
+    is_dirty_now: boolean,
+) => {
     const update: UpdateMessageContents = {
         // The Framework will fill in this value.
         file_path: "",
@@ -385,7 +389,7 @@ const save_lp = async (is_dirty: boolean) => {
     }
 
     // Add the contents only if the document is dirty.
-    if (is_dirty) {
+    if (is_dirty_now) {
         /// @ts-expect-error("Declare here; it will be completed later.")
         let code_mirror_diffable: CodeMirrorDiffable = {};
         if (is_doc_only()) {
@@ -394,20 +398,25 @@ const save_lp = async (is_dirty: boolean) => {
                 "CodeChat-body",
             ) as HTMLDivElement;
             mathJaxUnTypeset(codechat_body);
-            // To save a document only, simply get the HTML from the only Tiny
-            // MCE div. Update the `doc_contents` to stay in sync with the
-            // Server.
-            doc_content = tinymce.activeEditor!.save();
-            (
-                code_mirror_diffable as {
-                    Plain: CodeMirror;
-                }
-            ).Plain = {
-                doc: doc_content,
-                doc_blocks: [],
-            };
-            // Retypeset all math after saving the document.
-            await mathJaxTypeset(codechat_body);
+            // Use a try/finally to ensure that the document is retypeset even
+            // if errors occur.
+            try {
+                // To save a document only, simply get the HTML from the only
+                // Tiny MCE div. Update the `doc_contents` to stay in sync with
+                // the Server.
+                doc_content = tinymce.activeEditor!.save();
+                (
+                    code_mirror_diffable as {
+                        Plain: CodeMirror;
+                    }
+                ).Plain = {
+                    doc: doc_content,
+                    doc_blocks: [],
+                };
+            } finally {
+                // Retypeset all math after saving the document.
+                await mathJaxTypeset(codechat_body);
+            }
         } else {
             code_mirror_diffable = CodeMirror_save();
             assert("Plain" in code_mirror_diffable);
@@ -517,15 +526,6 @@ export const restoreSelection = ({
         );
     }
 };
-
-// Per
-// [MDN](https://developer.mozilla.org/en-US/docs/Web/API/Navigator/platform#examples),
-// here's the least bad way to choose between the control key and the command
-// key.
-const _os_is_osx =
-    navigator.platform.indexOf("Mac") === 0 || navigator.platform === "iPhone"
-        ? true
-        : false;
 
 // Save CodeChat Editor contents.
 const on_save = async (only_if_dirty: boolean = false) => {

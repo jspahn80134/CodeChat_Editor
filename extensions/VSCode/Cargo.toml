@@ -17,10 +17,10 @@
 # [http://www.gnu.org/licenses/](http://www.gnu.org/licenses/).
 #
 # `Cargo.toml` -- Rust interface for the VSCode extension
-# ==============================================================================
+# =======================================================
 #
 # General package configurations
-# ------------------------------------------------------------------------------
+# ------------------------------
 [package]
 authors = ["Bryan A. Jones", "Peter Loux"]
 categories = ["development-tools", "text-editors"]
@@ -32,7 +32,7 @@ license = "GPL-3.0-only"
 name = "codechat-editor-vscode-extension"
 readme = "../README.md"
 repository = "https://github.com/bjones1/CodeChat_Editor"
-version = "0.1.52"
+version = "0.1.54"
 
 [lib]
 crate-type = ["cdylib"]

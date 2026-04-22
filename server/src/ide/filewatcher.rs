@@ -14,9 +14,9 @@
 // the CodeChat Editor. If not, see
 // [http://www.gnu.org/licenses](http://www.gnu.org/licenses).
 /// `filewatcher.rs` -- Implement the File Watcher "IDE"
-/// ============================================================================
+/// ====================================================
 // Imports
-// -----------------------------------------------------------------------------
+// -------
 //
 // ### Standard library
 use std::{
@@ -67,13 +67,13 @@ use crate::{
     translation::{create_translation_queues, translation_task},
     webserver::{
         EditorMessage, EditorMessageContents, RESERVED_MESSAGE_ID, UpdateMessageContents,
-        client_websocket, get_client_framework, html_not_found, html_wrapper, path_display,
+        client_websocket, get_client_framework, html_wrapper, http_not_found, path_display,
         send_response,
     },
 };
 
 // Globals
-// -----------------------------------------------------------------------------
+// -------
 lazy_static! {
     /// Matches a bare drive letter. Only needed on Windows.
     static ref DRIVE_LETTER_REGEX: Regex = Regex::new("^[a-zA-Z]:$").unwrap();
@@ -82,7 +82,7 @@ lazy_static! {
 pub const FILEWATCHER_PATH_PREFIX: &[&str] = &["fw", "fsc"];
 
 /// File browser endpoints
-/// ----------------------------------------------------------------------------
+/// ----------------------
 ///
 /// The file browser provides a very crude interface, allowing a user to select
 /// a file from the local filesystem for editing. Long term, this should be
@@ -135,8 +135,8 @@ async fn filewatcher_browser_endpoint(
     let canon_path = match Path::new(&fixed_path).canonicalize() {
         Ok(p) => p,
         Err(err) => {
-            return Ok(html_not_found(&format!(
-                "<p>The requested path <code>{fixed_path}</code> is not valid: {err}.</p>"
+            return Ok(http_not_found(&format!(
+                "The requested path {fixed_path} is not valid: {err}."
             )));
         }
     };
@@ -150,8 +150,8 @@ async fn filewatcher_browser_endpoint(
 
     // It's not a directory or a file...we give up. For simplicity, don't handle
     // symbolic links.
-    Ok(html_not_found(&format!(
-        "<p>The requested path <code>{}</code> is not a directory or a file.</p>",
+    Ok(http_not_found(&format!(
+        "The requested path {} is not a directory or a file.",
         path_display(&canon_path)
     )))
 }
@@ -172,7 +172,7 @@ async fn dir_listing(web_path: &str, dir_path: &Path) -> HttpResponse {
         let mut drive_html = String::new();
         let logical_drives = match get_logical_drive() {
             Ok(v) => v,
-            Err(err) => return html_not_found(&format!("Unable to list drive letters: {err}.")),
+            Err(err) => return http_not_found(&format!("Unable to list drive letters: {err}.")),
         };
         for drive_letter in logical_drives {
             drive_html.push_str(&format!(
@@ -196,8 +196,8 @@ async fn dir_listing(web_path: &str, dir_path: &Path) -> HttpResponse {
     let mut unwrapped_read_dir = match fs::read_dir(dir_path).await {
         Ok(p) => p,
         Err(err) => {
-            return html_not_found(&format!(
-                "<p>Unable to list the directory {}: {err}/</p>",
+            return http_not_found(&format!(
+                "Unable to list the directory {}: {err}",
                 path_display(dir_path)
             ));
         }
@@ -213,8 +213,8 @@ async fn dir_listing(web_path: &str, dir_path: &Path) -> HttpResponse {
                     let file_type = match dir_entry.file_type().await {
                         Ok(x) => x,
                         Err(err) => {
-                            return html_not_found(&format!(
-                                "<p>Unable to determine the type of {}: {err}.",
+                            return http_not_found(&format!(
+                                "Unable to determine the type of {}: {err}.",
                                 path_display(&dir_entry.path()),
                             ));
                         }
@@ -230,7 +230,7 @@ async fn dir_listing(web_path: &str, dir_path: &Path) -> HttpResponse {
                 }
             }
             Err(err) => {
-                return html_not_found(&format!("<p>Unable to read file in directory: {err}."));
+                return http_not_found(&format!("Unable to read file in directory: {err}."));
             }
         };
     }
@@ -256,8 +256,8 @@ async fn dir_listing(web_path: &str, dir_path: &Path) -> HttpResponse {
         let dir_name = match dir.file_name().into_string() {
             Ok(v) => v,
             Err(err) => {
-                return html_not_found(&format!(
-                    "<p>Unable to decode directory name '{err:?}' as UTF-8."
+                return http_not_found(&format!(
+                    "Unable to decode directory name '{err:?}' as UTF-8."
                 ));
             }
         };
@@ -273,9 +273,7 @@ async fn dir_listing(web_path: &str, dir_path: &Path) -> HttpResponse {
         let file_name = match file.file_name().into_string() {
             Ok(v) => v,
             Err(err) => {
-                return html_not_found(
-                    &format!("<p>Unable to decode file name {err:?} as UTF-8.",),
-                );
+                return http_not_found(&format!("Unable to decode file name {err:?} as UTF-8.",));
             }
         };
         let encoded_file = urlencoding::encode(&file_name);
@@ -305,10 +303,13 @@ async fn dir_listing(web_path: &str, dir_path: &Path) -> HttpResponse {
         .body(html_wrapper(&body))
 }
 
-/// Calls the [GetLogicalDrives](https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getlogicaldrives) Windows API function
-/// and returns a `Vector` of drive letters.
+/// Calls the
+/// [GetLogicalDrives](https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getlogicaldrives)
+/// Windows API function and returns a `Vector` of drive letters.
 ///
-/// Copied almost verbatim from the [win_partitions crate](https://docs.rs/crate/win_partitions/0.3.0/source/src/win_api.rs#144) when compilation errors broke the crate.
+/// Copied almost verbatim from the
+/// [win\_partitions crate](https://docs.rs/crate/win_partitions/0.3.0/source/src/win_api.rs#144)
+/// when compilation errors broke the crate.
 #[cfg(target_os = "windows")]
 pub fn get_logical_drive() -> Result<Vec<char>, std::io::Error> {
     let bitmask = unsafe { GetLogicalDrives() };
@@ -318,7 +319,8 @@ pub fn get_logical_drive() -> Result<Vec<char>, std::io::Error> {
         let mut mask = 1;
         let mut result: Vec<char> = vec![];
 
-        for index in 1..26 {
+        // Recall that the range 1..27 ends a 26, covering all drive letters.
+        for index in 1..27 {
             if mask & bitmask == mask {
                 let char = std::char::from_u32(index + 64);
                 result.push(char.unwrap());
@@ -399,7 +401,7 @@ async fn processing_task(
         match app_state.ide_queues.lock().unwrap().remove(&connection_id) {
             Some(queues) => (queues.from_websocket_tx.clone(), queues.to_websocket_rx),
             None => {
-                let err = "No websocket queues for connection id {connection_id}.";
+                let err = format!("No websocket queues for connection id {connection_id}.");
                 error!("{err}");
                 return Err(error::ErrorBadRequest(err));
             }
@@ -588,11 +590,12 @@ async fn processing_task(
                             let result = 'process: {
                                 // Check that the file path matches the current
                                 // file. If `canonicalize` fails, then the files
-                                // don't match.
+                                // don't match. Note that `file_path` is already
+                                // canonicalized.
                                 if Some(Path::new(&update_message_contents.file_path).to_path_buf()) != current_filepath {
                                     break 'process Err(ResultErrTypes::WrongFileUpdate(update_message_contents.file_path, current_filepath.clone()));
                                 }
-                                // With code or a path, there's nothing to save.
+                                // Without code, there's nothing to save.
                                 let codechat_for_web = match update_message_contents.contents {
                                     None => break 'process Ok(ResultOkTypes::Void),
                                     Some(cfw) => cfw,
@@ -632,7 +635,8 @@ async fn processing_task(
                                 {
                                     break 'err_exit Err(ResultErrTypes::FileUnwatchError(cfp.to_path_buf(), err.to_string()));
                                 }
-                                // Update to the new path.
+                                // Update to the new path, which is already
+                                // canonicalized.
                                 current_filepath = Some(file_path.to_path_buf());
 
                                 // Watch the new file.
@@ -662,7 +666,7 @@ async fn processing_task(
 
                         EditorMessageContents::LoadFile(..)  => {
                             // We never have the requested file loaded in this
-                            // "IDE". Intead, it's always on disk.
+                            // "IDE". Instead, it's always on disk.
                             send_response(&from_ide_tx, m.id, Ok(ResultOkTypes::LoadFile(None))).await;
                         }
 
@@ -725,7 +729,7 @@ pub fn get_connection_id_raw(app_state: &WebAppState) -> u32 {
 }
 
 // Tests
-// -----------------------------------------------------------------------------
+// -----
 #[cfg(test)]
 mod tests {
     use std::{
@@ -992,7 +996,10 @@ mod tests {
                 .unwrap();
             let (id_rx, msg_rx) = get_message_as!(to_client_rx, EditorMessageContents::Result);
             assert_eq!(id, id_rx);
-            matches!(cast!(&msg_rx, Err), ResultErrTypes::ClientIllegalMessage);
+            assert!(matches!(
+                cast!(&msg_rx, Err),
+                ResultErrTypes::ClientIllegalMessage
+            ));
         }
 
         // 5. Send an update message with no path.
@@ -1008,7 +1015,7 @@ mod tests {
                     is_re_translation: false,
                     contents: Some(CodeChatForWeb {
                         metadata: SourceFileMetadata {
-                            mode: "".to_string(),
+                            mode: "cpp".to_string(),
                         },
                         source: CodeMirrorDiffable::Plain(CodeMirror {
                             doc: "".to_string(),
