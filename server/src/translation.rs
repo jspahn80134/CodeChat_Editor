@@ -1191,14 +1191,16 @@ impl TranslationTask {
                 //    `self.code_mirror_doc`. Otherwise:
                 //    1. Locate the relevant doc block, identified by
                 //       `self.code_mirror_doc_blocks.from ==
-                //       cursor_position.DomLocation.from`.
+                //       cursor_position.DomLocation.from`. If not found, abort
+                //       and return `None` for the cursor position.
                 //    2. Count all newlines in `self.code_mirror_doc` which
-                //       precede `cursor_position.DomLocation.from`. Translate
-                //       the `from` location (in UTF-16 code units) to bytes
-                //       using `processing::byte_index_of`.
+                //       precede `cursor_position.DomLocation.from`. To do so,
+                //       translate the `from` location (in UTF-16 code units) to
+                //       bytes using `processing::byte_index_of`.
                 // 2. Create a temporary one-element `Vec<CodeDocBlock>`,
                 //    containing only the doc block / HTML (with empty values
-                //    for `indent` and `delimiter`) just identified.
+                //    for `indent` and `delimiter` for the HTML case) just
+                //    identified.
                 // 3. Invoke `processing::doc_block_html_to_markdown` on this
                 //    vec, passing `cursor_position.DomLocation.dom_offsets` to
                 //    insert a marker character.
@@ -1210,7 +1212,8 @@ impl TranslationTask {
                 //    the marker already exists in the string; this will at
                 //    least help the user understand where an odd character
                 //    resides, if the original marker precedes the inserted
-                //    marker.
+                //    marker. If the marker wasn't found, then report the
+                //    newlines before the marker as 0.
 
                 debug!("Sending update id = {}", client_message.id);
                 queue_send_func!(self.to_ide_tx.send(EditorMessage {
