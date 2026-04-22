@@ -123,7 +123,10 @@ let codeChatEditorServer: CodeChatEditorServer | undefined;
 // CAPTURE (Dissertation instrumentation)
 // --------------------------------------
 
-function isInMarkdownCodeFence(doc: vscode.TextDocument, line: number): boolean {
+function isInMarkdownCodeFence(
+    doc: vscode.TextDocument,
+    line: number,
+): boolean {
     // Very simple fence tracker: toggles when encountering \`\`\` or ~~~ at
     // start of line. Good enough for dissertation instrumentation; refine later
     // if needed.
@@ -164,7 +167,10 @@ function isInRstCodeBlock(doc: vscode.TextDocument, line: number): boolean {
     return /^\s+/.test(cur);
 }
 
-function classifyAtPosition(doc: vscode.TextDocument, pos: vscode.Position): ActivityKind {
+function classifyAtPosition(
+    doc: vscode.TextDocument,
+    pos: vscode.Position,
+): ActivityKind {
     if (DOC_LANG_IDS.has(doc.languageId)) {
         if (doc.languageId === "markdown") {
             return isInMarkdownCodeFence(doc, pos.line) ? "code" : "doc";
@@ -178,10 +184,10 @@ function classifyAtPosition(doc: vscode.TextDocument, pos: vscode.Position): Act
     return "code";
 }
 
-
-
 // Types for sending capture events to the Rust server. This mirrors
 // `CaptureEventWire` in webserver.rs.
+type CaptureEventData = Record<string, unknown>;
+
 interface CaptureEventPayload {
     user_id: string;
     assignment_id?: string;
@@ -190,7 +196,7 @@ interface CaptureEventPayload {
     event_type: string;
     client_timestamp_ms?: number;
     client_tz_offset_min?: number;
-    data: any; // sent as JSON
+    data: CaptureEventData;
 }
 
 // TODO: replace these with something real (e.g., VS Code settings) For now, we
@@ -206,11 +212,7 @@ const CAPTURE_USER_ID: string = (() => {
     }
 
     // Fallbacks (should rarely be needed)
-    return (
-        process.env["USERNAME"] ||
-        process.env["USER"] ||
-        "unknown-user"
-    );
+    return process.env["USERNAME"] || process.env["USER"] || "unknown-user";
 })();
 
 const CAPTURE_ASSIGNMENT_ID = "demo-assignment";
@@ -238,23 +240,11 @@ const DOC_LANG_IDS = new Set<string>([
 let lastActivityKind: ActivityKind = "other";
 let docSessionStart: number | null = null;
 
-// Heuristic: classify a document as documentation vs. code vs. other.
-function classifyDocument(doc: vscode.TextDocument | undefined): ActivityKind {
-    if (!doc) {
-        return "other";
-    }
-    if (DOC_LANG_IDS.has(doc.languageId)) {
-        return "doc";
-    }
-    // Everything else we treat as code for now.
-    return "code";
-}
-
 // Helper to send a capture event to the Rust server.
 async function sendCaptureEvent(
     eventType: string,
     filePath?: string,
-    data: any = {},
+    data: CaptureEventData = {},
 ): Promise<void> {
     const payload: CaptureEventPayload = {
         user_id: CAPTURE_USER_ID,
@@ -348,7 +338,11 @@ function noteActivity(kind: ActivityKind, filePath?: string) {
 
     // If we switched between doc and code, log a switch\_pane event.
     const docOrCode = (k: ActivityKind) => k === "doc" || k === "code";
-    if (docOrCode(lastActivityKind) && docOrCode(kind) && kind !== lastActivityKind) {
+    if (
+        docOrCode(lastActivityKind) &&
+        docOrCode(kind) &&
+        kind !== lastActivityKind
+    ) {
         void sendCaptureEvent("switch_pane", filePath, {
             from: lastActivityKind,
             to: kind,
@@ -364,7 +358,8 @@ function noteActivity(kind: ActivityKind, filePath?: string) {
 // This is invoked when the extension is activated. It either creates a new
 // CodeChat Editor Server instance or reveals the currently running one.
 export const activate = (context: vscode.ExtensionContext) => {
-    capture_output_channel = vscode.window.createOutputChannel("CodeChat Capture");
+    capture_output_channel =
+        vscode.window.createOutputChannel("CodeChat Capture");
     context.subscriptions.push(capture_output_channel);
 
     context.subscriptions.push(
@@ -402,9 +397,6 @@ export const activate = (context: vscode.ExtensionContext) => {
                             // CAPTURE: update session/switch state. The server
                             // classifies write_* events after parsing.
                             const doc = event.document;
-// ```
-//                        const kind = classifyDocument(doc);
-// ```
                             const firstChange = event.contentChanges[0];
                             const pos = firstChange.range.start;
                             const kind = classifyAtPosition(doc, pos);
@@ -443,8 +435,9 @@ export const activate = (context: vscode.ExtensionContext) => {
                             // CAPTURE: update activity + possible
                             // switch\_pane/doc\_session.
                             const doc = event.document;
-                            // const kind = classifyDocument(doc);
-                            const pos = event.selection?.active ?? new vscode.Position(0, 0);
+                            const pos =
+                                event.selection?.active ??
+                                new vscode.Position(0, 0);
                             const kind = classifyAtPosition(doc, pos);
 
                             const filePath = doc.fileName;
@@ -455,27 +448,30 @@ export const activate = (context: vscode.ExtensionContext) => {
                     );
 
                     context.subscriptions.push(
-                        vscode.window.onDidChangeTextEditorSelection((event) => {
-                            if (ignore_selection_change) {
-                                ignore_selection_change = false;
-                                return;
-                            }
+                        vscode.window.onDidChangeTextEditorSelection(
+                            (event) => {
+                                if (ignore_selection_change) {
+                                    ignore_selection_change = false;
+                                    return;
+                                }
 
-                            console_log(
-                                "CodeChat Editor extension: sending updated cursor/scroll position.",
-                            );
+                                console_log(
+                                    "CodeChat Editor extension: sending updated cursor/scroll position.",
+                                );
 
-                            // CAPTURE: treat a selection change as "activity"
-                            // in this document.
-                            const doc = event.textEditor.document;
-                            // const kind = classifyDocument(doc);
-                            const pos = event.selections?.[0]?.active ?? event.textEditor.selection.active;
-                            const kind = classifyAtPosition(doc, pos);
-                            const filePath = doc.fileName;
-                            noteActivity(kind, filePath);
+                                // CAPTURE: treat a selection change as "activity"
+                                // in this document.
+                                const doc = event.textEditor.document;
+                                const pos =
+                                    event.selections?.[0]?.active ??
+                                    event.textEditor.selection.active;
+                                const kind = classifyAtPosition(doc, pos);
+                                const filePath = doc.fileName;
+                                noteActivity(kind, filePath);
 
-                            send_update(false);
-                        }),
+                                send_update(false);
+                            },
+                        ),
                     );
 
                     // CAPTURE: end of a debug/run session.
@@ -483,14 +479,10 @@ export const activate = (context: vscode.ExtensionContext) => {
                         vscode.debug.onDidTerminateDebugSession((session) => {
                             const active = vscode.window.activeTextEditor;
                             const filePath = active?.document.fileName;
-                            void sendCaptureEvent(
-                                "run_end",
-                                filePath,
-                                {
-                                    sessionName: session.name,
-                                    sessionType: session.type,
-                                },
-                            );
+                            void sendCaptureEvent("run_end", filePath, {
+                                sessionName: session.name,
+                                sessionType: session.type,
+                            });
                         }),
                     );
 
@@ -500,30 +492,22 @@ export const activate = (context: vscode.ExtensionContext) => {
                             const active = vscode.window.activeTextEditor;
                             const filePath = active?.document.fileName;
                             const task = e.execution.task;
-                            void sendCaptureEvent(
-                                "compile_end",
-                                filePath,
-                                {
-                                    taskName: task.name,
-                                    taskSource: task.source,
-                                    exitCode: e.exitCode,
-                                },
-                            );
+                            void sendCaptureEvent("compile_end", filePath, {
+                                taskName: task.name,
+                                taskSource: task.source,
+                                exitCode: e.exitCode,
+                            });
                         }),
                     );
 
                     // CAPTURE: listen for file saves.
                     context.subscriptions.push(
                         vscode.workspace.onDidSaveTextDocument((doc) => {
-                            void sendCaptureEvent(
-                                "save",
-                                doc.fileName,
-                                {
-                                    reason: "manual_save",
-                                    languageId: doc.languageId,
-                                    lineCount: doc.lineCount,
-                                },
-                            );
+                            void sendCaptureEvent("save", doc.fileName, {
+                                reason: "manual_save",
+                                languageId: doc.languageId,
+                                lineCount: doc.lineCount,
+                            });
                         }),
                     );
 
@@ -532,14 +516,10 @@ export const activate = (context: vscode.ExtensionContext) => {
                         vscode.debug.onDidStartDebugSession((session) => {
                             const active = vscode.window.activeTextEditor;
                             const filePath = active?.document.fileName;
-                            void sendCaptureEvent(
-                                "run",
-                                filePath,
-                                {
-                                    sessionName: session.name,
-                                    sessionType: session.type,
-                                },
-                            );
+                            void sendCaptureEvent("run", filePath, {
+                                sessionName: session.name,
+                                sessionType: session.type,
+                            });
                         }),
                     );
 
@@ -549,16 +529,12 @@ export const activate = (context: vscode.ExtensionContext) => {
                             const active = vscode.window.activeTextEditor;
                             const filePath = active?.document.fileName;
                             const task = e.execution.task;
-                            void sendCaptureEvent(
-                                "compile",
-                                filePath,
-                                {
-                                    taskName: task.name,
-                                    taskSource: task.source,
-                                    definition: task.definition,
-                                    processId: e.processId,
-                                },
-                            );
+                            void sendCaptureEvent("compile", filePath, {
+                                taskName: task.name,
+                                taskSource: task.source,
+                                definition: task.definition,
+                                processId: e.processId,
+                            });
                         }),
                     );
                 }
@@ -571,11 +547,13 @@ export const activate = (context: vscode.ExtensionContext) => {
                 assert(typeof codechat_client_location_str === "string");
                 switch (codechat_client_location_str) {
                     case "html":
-                        codechat_client_location = CodeChatEditorClientLocation.html;
+                        codechat_client_location =
+                            CodeChatEditorClientLocation.html;
                         break;
 
                     case "browser":
-                        codechat_client_location = CodeChatEditorClientLocation.browser;
+                        codechat_client_location =
+                            CodeChatEditorClientLocation.browser;
                         break;
 
                     default:
@@ -584,7 +562,10 @@ export const activate = (context: vscode.ExtensionContext) => {
 
                 // Create or reveal the webview panel; if this is an external
                 // browser, we'll open it after the client is created.
-                if (codechat_client_location === CodeChatEditorClientLocation.html) {
+                if (
+                    codechat_client_location ===
+                    CodeChatEditorClientLocation.html
+                ) {
                     if (webview_panel !== undefined) {
                         webview_panel.reveal(undefined, true);
                     } else {
@@ -601,7 +582,9 @@ export const activate = (context: vscode.ExtensionContext) => {
                             },
                         );
                         webview_panel.onDidDispose(async () => {
-                            console_log("CodeChat Editor extension: shut down webview.");
+                            console_log(
+                                "CodeChat Editor extension: shut down webview.",
+                            );
                             quiet_next_error = true;
                             webview_panel = undefined;
                             await stop_client();
@@ -612,7 +595,8 @@ export const activate = (context: vscode.ExtensionContext) => {
                 // Provide a simple status display while the server is starting
                 // up.
                 if (webview_panel !== undefined) {
-                    webview_panel.webview.html = "<h1>CodeChat Editor</h1><p>Loading...</p>";
+                    webview_panel.webview.html =
+                        "<h1>CodeChat Editor</h1><p>Loading...</p>";
                 } else {
                     vscode.window.showInformationMessage(
                         "The CodeChat Editor is loading in an external browser...",
@@ -627,16 +611,22 @@ export const activate = (context: vscode.ExtensionContext) => {
                 extensionCaptureSessionStarted = false;
 
                 const hosted_in_ide =
-                    codechat_client_location === CodeChatEditorClientLocation.html;
+                    codechat_client_location ===
+                    CodeChatEditorClientLocation.html;
                 console_log(
                     `CodeChat Editor extension: sending message Opened(${hosted_in_ide}).`,
                 );
                 await codeChatEditorServer.sendMessageOpened(hosted_in_ide);
 
-                if (codechat_client_location === CodeChatEditorClientLocation.browser) {
+                if (
+                    codechat_client_location ===
+                    CodeChatEditorClientLocation.browser
+                ) {
                     captureTransportReady = true;
                     const active = vscode.window.activeTextEditor;
-                    void startExtensionCaptureSession(active?.document.fileName);
+                    void startExtensionCaptureSession(
+                        active?.document.fileName,
+                    );
                     send_update(false);
                 }
 
@@ -647,7 +637,9 @@ export const activate = (context: vscode.ExtensionContext) => {
                         break;
                     }
 
-                    const { id, message } = JSON.parse(message_raw) as EditorMessage;
+                    const { id, message } = JSON.parse(
+                        message_raw,
+                    ) as EditorMessage;
                     console_log(
                         `CodeChat Editor extension: Received data id = ${id}, message = ${format_struct(
                             message,
@@ -666,7 +658,8 @@ export const activate = (context: vscode.ExtensionContext) => {
 
                     switch (key) {
                         case "Update": {
-                            const current_update = value as UpdateMessageContents;
+                            const current_update =
+                                value as UpdateMessageContents;
                             const doc = get_document(current_update.file_path);
                             if (doc === undefined) {
                                 await sendResult(id, {
@@ -686,7 +679,12 @@ export const activate = (context: vscode.ExtensionContext) => {
                                     wse.replace(
                                         doc.uri,
                                         doc.validateRange(
-                                            new vscode.Range(0, 0, doc.lineCount, 0),
+                                            new vscode.Range(
+                                                0,
+                                                0,
+                                                doc.lineCount,
+                                                0,
+                                            ),
                                         ),
                                         source.Plain.doc,
                                     );
@@ -712,10 +710,18 @@ export const activate = (context: vscode.ExtensionContext) => {
                                     for (const diff of diffs) {
                                         const from = doc.positionAt(diff.from);
                                         if (diff.to === undefined) {
-                                            wse.insert(doc.uri, from, diff.insert);
+                                            wse.insert(
+                                                doc.uri,
+                                                from,
+                                                diff.insert,
+                                            );
                                         } else {
                                             const to = doc.positionAt(diff.to);
-                                            wse.replace(doc.uri, new Range(from, to), diff.insert);
+                                            wse.replace(
+                                                doc.uri,
+                                                new Range(from, to),
+                                                diff.insert,
+                                            );
                                         }
                                     }
                                 }
@@ -740,7 +746,10 @@ export const activate = (context: vscode.ExtensionContext) => {
                                     0,
                                 );
                                 editor.revealRange(
-                                    new vscode.Range(scroll_position, scroll_position),
+                                    new vscode.Range(
+                                        scroll_position,
+                                        scroll_position,
+                                    ),
                                     TextEditorRevealType.AtTop,
                                 );
                             }
@@ -748,9 +757,15 @@ export const activate = (context: vscode.ExtensionContext) => {
                             const cursor_line = current_update.cursor_position;
                             if (cursor_line !== undefined && editor) {
                                 ignore_selection_change = true;
-                                const cursor_position = new vscode.Position(cursor_line - 1, 0);
+                                const cursor_position = new vscode.Position(
+                                    cursor_line - 1,
+                                    0,
+                                );
                                 editor.selections = [
-                                    new vscode.Selection(cursor_position, cursor_position),
+                                    new vscode.Selection(
+                                        cursor_position,
+                                        cursor_position,
+                                    ),
                                 ];
                                 // I'd prefer to set `ignore_selection_change =
                                 // false` here, but even doing so after a
@@ -769,18 +784,25 @@ export const activate = (context: vscode.ExtensionContext) => {
                             if (is_text) {
                                 let document;
                                 try {
-                                    document = await vscode.workspace.openTextDocument(current_file);
+                                    document =
+                                        await vscode.workspace.openTextDocument(
+                                            current_file,
+                                        );
                                 } catch (e) {
                                     await sendResult(id, {
-                                        OpenFileFailed: [current_file, (e as Error).toString()],
+                                        OpenFileFailed: [
+                                            current_file,
+                                            (e as Error).toString(),
+                                        ],
                                     });
                                     continue;
                                 }
                                 ignore_active_editor_change = true;
-                                current_editor = await vscode.window.showTextDocument(
-                                    document,
-                                    current_editor?.viewColumn,
-                                );
+                                current_editor =
+                                    await vscode.window.showTextDocument(
+                                        document,
+                                        current_editor?.viewColumn,
+                                    );
                                 ignore_active_editor_change = false;
                                 await sendResult(id);
                             } else {
@@ -857,7 +879,10 @@ export const activate = (context: vscode.ExtensionContext) => {
                             console_log(
                                 `CodeChat Editor extension: Result(LoadFile(id = ${id}, ${format_struct(load_file_result)}))`,
                             );
-                            await codeChatEditorServer.sendResultLoadfile(id, load_file_result);
+                            await codeChatEditorServer.sendResultLoadfile(
+                                id,
+                                load_file_result,
+                            );
                             break;
                         }
 
@@ -868,7 +893,9 @@ export const activate = (context: vscode.ExtensionContext) => {
                             await sendResult(id);
                             captureTransportReady = true;
                             const active = vscode.window.activeTextEditor;
-                            void startExtensionCaptureSession(active?.document.fileName);
+                            void startExtensionCaptureSession(
+                                active?.document.fileName,
+                            );
                             send_update(false);
                             break;
                         }
@@ -971,7 +998,9 @@ const send_update = (this_is_dirty: boolean) => {
                         `CodeChat Editor extension: sending CurrentFile(${current_file}}).`,
                     );
                     try {
-                        await codeChatEditorServer!.sendMessageCurrentFile(current_file);
+                        await codeChatEditorServer!.sendMessageCurrentFile(
+                            current_file,
+                        );
                     } catch (e) {
                         show_error(`Error sending CurrentFile message: ${e}.`);
                     }
@@ -979,7 +1008,8 @@ const send_update = (this_is_dirty: boolean) => {
                     return;
                 }
 
-                const cursor_position = current_editor!.selection.active.line + 1;
+                const cursor_position =
+                    current_editor!.selection.active.line + 1;
                 const scroll_position =
                     current_editor!.visibleRanges[0].start.line + 1;
                 const file_path = current_editor!.document.fileName;
@@ -1032,7 +1062,9 @@ const show_error = (message: string) => {
     }
     console.error(`CodeChat Editor extension: ${message}`);
     if (webview_panel !== undefined) {
-        if (!webview_panel.webview.html.startsWith("<h1>CodeChat Editor</h1>")) {
+        if (
+            !webview_panel.webview.html.startsWith("<h1>CodeChat Editor</h1>")
+        ) {
             webview_panel.webview.html = "<h1>CodeChat Editor</h1>";
         }
         webview_panel.webview.html += `<p style="white-space: pre-wrap;">${escape(
@@ -1058,10 +1090,11 @@ const can_render = () => {
 };
 
 const get_document = (file_path: string) => {
-    for ( const doc of vscode.workspace.textDocuments) {
+    for (const doc of vscode.workspace.textDocuments) {
         if (
             (!is_windows && doc.fileName === file_path) ||
-            (is_windows && doc.fileName.toUpperCase() === file_path.toUpperCase())
+            (is_windows &&
+                doc.fileName.toUpperCase() === file_path.toUpperCase())
         ) {
             return doc;
         }
@@ -1081,16 +1114,3 @@ const console_log = (...args: any) => {
         console.log(...args);
     }
 };
-
-function getCurrentUsername(): string {
-  try {
-    // Most reliable on Windows/macOS/Linux
-    const u = os.userInfo().username;
-    if (u && u.trim().length > 0) return u.trim();
-  } catch (_) {}
-
-  // Fallbacks
-  const envUser = process.env["USERNAME"] || process.env["USER"];
-  return (envUser && envUser.trim().length > 0) ? envUser.trim() : "unknown-user";
-}
-
