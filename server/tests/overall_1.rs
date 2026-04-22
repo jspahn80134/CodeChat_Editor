@@ -510,10 +510,7 @@ async fn test_server_core(
     server_id += MESSAGE_ID_INCREMENT;
 
     // Look at the content, which should be an iframe.
-    let plain_content = driver
-        .find(By::Css("#CodeChat-contents"))
-        .await
-        .unwrap();
+    let plain_content = driver.find(By::Css("#CodeChat-contents")).await.unwrap();
     assert!(
         plain_content
             .outer_html()
@@ -529,11 +526,7 @@ async fn test_server_core(
     //
     // Click on the link for the PDF to test.
     let toc_iframe = driver.find(By::Css("#CodeChat-sidebar")).await.unwrap();
-    driver
-        .switch_to()
-        .frame_element(&toc_iframe)
-        .await
-        .unwrap();
+    driver.switch_to().frame_element(&toc_iframe).await.unwrap();
     let test_pdf = driver.find(By::LinkText("test.pdf")).await.unwrap();
     test_pdf.click().await.unwrap();
 
@@ -595,10 +588,7 @@ async fn test_server_core(
         .frame_element(&codechat_iframe)
         .await
         .unwrap();
-    let plain_content = driver
-        .find(By::Css("#CodeChat-contents"))
-        .await
-        .unwrap();
+    let plain_content = driver.find(By::Css("#CodeChat-contents")).await.unwrap();
     assert!(
         plain_content
             .outer_html()
@@ -636,11 +626,7 @@ async fn test_client_core(
 
     // Click on the link for the PDF to test.
     let toc_iframe = driver.find(By::Css("#CodeChat-sidebar")).await.unwrap();
-    driver
-        .switch_to()
-        .frame_element(&toc_iframe)
-        .await
-        .unwrap();
+    driver.switch_to().frame_element(&toc_iframe).await.unwrap();
     let test_py = driver.find(By::LinkText("test.py")).await.unwrap();
     test_py.click().await.unwrap();
 
@@ -688,10 +674,7 @@ async fn test_client_core(
         .frame_element(&codechat_iframe)
         .await
         .unwrap();
-    let mocha_results = driver
-        .find(By::Css("#mocha-stats .result"))
-        .await
-        .unwrap();
+    let mocha_results = driver.find(By::Css("#mocha-stats .result")).await.unwrap();
     assert_eq!(mocha_results.inner_html().await.unwrap(), "✓");
 
     server_id -= MESSAGE_ID_INCREMENT;
