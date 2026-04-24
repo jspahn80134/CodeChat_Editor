@@ -220,7 +220,7 @@ const _open_lp = async (
     // Process any pending events before proceeding. Sometimes, TinyMCE has a
     // pending edit that hasn't been processed yet, meaning the `is_dirty` flag
     // is incorrect.
-    tinymce.activeEditor?.save();
+    tinymce.activeEditor?.save({ format: "raw" });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     // The only call to `await` is based on TinyMCE init, which should only

@@ -31,6 +31,7 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
     slice::Iter,
+    string::FromUtf8Error,
 };
 
 // ### Third-party
@@ -54,6 +55,7 @@ use html5ever::{
 use imara_diff::{Algorithm, Diff, Hunk, InternedInput, TokenSource};
 use lazy_static::lazy_static;
 use markup5ever_rcdom::{Node, NodeData, RcDom, SerializableHandle};
+use minify_html::minify;
 use phf::phf_map;
 use pulldown_cmark::{Options, Parser, html};
 use regex::Regex;
@@ -296,7 +298,7 @@ const DOC_BLOCK_SEPARATOR_STRING: &str = concat!(
 // apart. Since this is post hydration, the element names are normalized to
 // lower case.
 const DOC_BLOCK_SEPARATOR_SPLIT_STRING: &str =
-    "<codechateditor-separator></codechateditor-separator>\n";
+    "<codechateditor-separator></codechateditor-separator>";
 // Correctly terminated fenced code blocks produce this, which can be removed
 // from the HTML produced by Markdown conversion.
 const DOC_BLOCK_SEPARATOR_REMOVE_FENCE: &str = r#"<CodeChatEditor-fence>
@@ -605,14 +607,14 @@ pub fn doc_block_html_to_markdown(
     //
     // This will be applied to each doc block -- when this parameter is
     // provided, it's typically called with a vec containing only one doc block.
-    dom_offsets: &Option<Vec<usize>>,
+    dom_location: &Option<(Vec<usize>, usize)>,
 ) -> Result<Vec<CodeDocBlock>, HtmlToMarkdownWrappedError> {
     let mut converter = HtmlToMarkdownWrapped::new();
     let mut last_doc_block_index = None;
     for (index, code_doc_block) in &mut code_doc_block_vec.iter_mut().enumerate() {
         if let CodeDocBlock::DocBlock(doc_block) = code_doc_block {
             last_doc_block_index = Some(index);
-            let tree = html_to_tree(&doc_block.contents, dom_offsets)?;
+            let tree = html_to_tree(&doc_block.contents, dom_location)?;
             dehydrating_walk_node(&tree);
 
             // Compute a line wrap width based on the current indent. Set a
@@ -809,6 +811,8 @@ pub enum SourceToCodeChatForWebError {
     // convert the IO error to a string.
     #[error("unable to parse HTML {0}")]
     ParseFailed(String),
+    #[error("encoding error {0}")]
+    EncodeFailed(#[from] FromUtf8Error),
 }
 
 // Transform from source code to `CodeChatForWeb`
@@ -917,6 +921,16 @@ pub fn source_to_codechat_for_web(
             // 3. Hydrate the cleaned HTML.
             let html = hydrate_html(&html)
                 .map_err(|e| SourceToCodeChatForWebError::ParseFailed(e.to_string()))?;
+            // Use a spec-compliant minifier.
+            let mut cfg = minify_html::Cfg::new();
+            cfg.allow_noncompliant_unquoted_attribute_values = false;
+            cfg.allow_optimal_entities = false;
+            cfg.allow_removing_spaces_between_attributes = false;
+            cfg.keep_comments = true;
+            cfg.keep_closing_tags = true;
+            cfg.keep_html_and_head_opening_tags = true;
+            cfg.minify_doctype = false;
+            let html = String::from_utf8(minify(html.as_bytes(), &cfg))?;
             // 4. Split on the separator.
             let mut doc_block_contents_iter = html.split(DOC_BLOCK_SEPARATOR_SPLIT_STRING);
             // <a class="fence-mending-end"></a>
@@ -1049,7 +1063,7 @@ pub const UNICODE_CURSOR_MARKER: char = '\u{E83B}';
 fn html_to_tree(
     html: &str,
     // See the same parameter from `doc_block_html_to_markdown`.
-    dom_offsets: &Option<Vec<usize>>,
+    dom_location: &Option<(Vec<usize>, usize)>,
 ) -> io::Result<Rc<Node>> {
     let dom = parse_document(
         RcDom::default(),
@@ -1064,7 +1078,7 @@ fn html_to_tree(
     .from_utf8()
     .read_from(&mut html.as_bytes())?;
 
-    if let Some(dom_offsets) = dom_offsets {
+    if let Some((dom_path, dom_offset)) = dom_location {
         // Each element in `dom_offsets` is the index of a node in the `dom`.
         // Take the first index, then descend into the indicated node. Repeat
         // this process until the last node, which should be a text node. The
@@ -1072,35 +1086,31 @@ fn html_to_tree(
         // `UNICODE_CURSOR_MARKER` character. Any failures (index exceeds number
         // of nodes, etc.) use an approximation where possible.
         let mut current_node = get_dom_body(&dom.document);
-        let last_idx = dom_offsets.len().saturating_sub(1);
-        'outer: for (i, &offset) in dom_offsets.iter().enumerate() {
-            if i == last_idx {
-                // Insert the cursor marker at the given character offset within
-                // the text node.
-                if let NodeData::Text { contents } = &current_node.data {
-                    let mut text = contents.borrow().to_string();
-                    // Convert the character offset into a byte offset.
-                    let byte_offset = text
-                        .char_indices()
-                        .nth(offset)
-                        .map(|(b, _)| b)
-                        .unwrap_or(text.len());
-                    text.insert(byte_offset, UNICODE_CURSOR_MARKER);
-                    *contents.borrow_mut() = text.into();
+        'outer: for &offset in dom_path {
+            let next_node = {
+                let children = current_node.children.borrow();
+                if offset < children.len() {
+                    children[offset].clone()
+                } else if let Some(last) = children.last() {
+                    last.clone()
+                } else {
+                    break 'outer;
                 }
-            } else {
-                let next_node = {
-                    let children = current_node.children.borrow();
-                    if offset < children.len() {
-                        children[offset].clone()
-                    } else if let Some(last) = children.last() {
-                        last.clone()
-                    } else {
-                        break 'outer;
-                    }
-                };
-                current_node = next_node;
-            }
+            };
+            current_node = next_node;
+        }
+        // Insert the cursor marker at the given character offset within
+        // the text node.
+        if let NodeData::Text { contents } = &current_node.data {
+            let mut text = contents.borrow().to_string();
+            // Convert the character offset into a byte offset.
+            let byte_offset = text
+                .char_indices()
+                .nth(*dom_offset)
+                .map(|(b, _)| b)
+                .unwrap_or(text.len());
+            text.insert(byte_offset, UNICODE_CURSOR_MARKER);
+            *contents.borrow_mut() = text.into();
         }
     }
 

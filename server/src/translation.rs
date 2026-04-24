@@ -242,7 +242,7 @@ use crate::{
 // -------
 //
 // The max length of a message to show in the console.
-const MAX_MESSAGE_LENGTH: usize = 500;
+const MAX_MESSAGE_LENGTH: usize = 50000;
 
 lazy_static! {
         /// A regex to determine the type of the first EOL. See 'PROCESSINGS\`.
@@ -1186,99 +1186,101 @@ impl TranslationTask {
                 // Client's DOM-based coordinate) to `Line` (the IDE's
                 // line-number coordinate) before forwarding to the IDE, which
                 // only understands line numbers.
-                let cursor_position =
-                    if let Some(CursorPosition::DomLocation { from, dom_offsets }) =
-                        update_message_contents.cursor_position
-                    {
-                        // Use a closure to allow early returns on error (returning
-                        // `None` so the IDE receives no cursor position).
-                        (|| {
-                            // Detect Markdown mode: Markdown documents store all
-                            // HTML in `code_mirror_doc` with an empty doc-blocks
-                            // list; CodeChat documents have non-empty doc blocks.
-                            // We can't rely on the lexer name in
-                            // `CodeChatForWeb::SourceFileMetaData`, since the
-                            // message `contents` may be None.
-                            let is_markdown = self
-                                .code_mirror_doc_blocks
-                                .as_ref()
-                                .is_none_or(|v| v.is_empty());
+                let cursor_position = if let Some(CursorPosition::DomLocation {
+                    from,
+                    dom_path,
+                    dom_offset,
+                }) = update_message_contents.cursor_position
+                {
+                    // Use a closure to allow early returns on error (returning
+                    // `None` so the IDE receives no cursor position).
+                    (|| {
+                        // Detect Markdown mode: Markdown documents store all
+                        // HTML in `code_mirror_doc` with an empty doc-blocks
+                        // list; CodeChat documents have non-empty doc blocks.
+                        // We can't rely on the lexer name in
+                        // `CodeChatForWeb::SourceFileMetaData`, since the
+                        // message `contents` may be None.
+                        let is_markdown = self
+                            .code_mirror_doc_blocks
+                            .as_ref()
+                            .is_none_or(|v| v.is_empty());
 
-                            // 1. Find the HTML (for a Markdown document) or the doc
-                            //    block the cursor is in. Create a temporary
-                            //    one-element `Vec<CodeDocBlock>` from this.
-                            //    containing only the doc block identified above.
-                            let (preceding_newlines, doc_block) = if is_markdown {
-                                // 1. For Markdown, there are zero preceding
-                                //    newlines and the relevant HTML is in
-                                //    `self.code_mirror_doc`.
-                                (
-                                    0usize,
-                                    DocBlock {
-                                        indent: String::new(),
-                                        delimiter: String::new(),
-                                        contents: self.code_mirror_doc.clone(),
-                                        lines: 0,
-                                    },
-                                )
-                            } else {
-                                // 1. Locate the relevant doc block, identified by
-                                //    its starting offset matching `from`. If not
-                                //    found, abort and return `None`.
-                                let blocks = self.code_mirror_doc_blocks.as_ref().unwrap();
-                                let block = blocks.iter().find(|b| b.from == from)?;
-
-                                // 2. Count all newlines in `self.code_mirror_doc`
-                                //    which precede `from`. `from` is in UTF-16 code
-                                //    units; convert to a byte index first.
-                                let byte_idx = byte_index_of(&self.code_mirror_doc, from);
-                                let preceding_newlines = self.code_mirror_doc[..byte_idx]
-                                    .chars()
-                                    .filter(|&c| c == '\n')
-                                    .count();
-
-                                (
-                                    preceding_newlines,
-                                    DocBlock {
-                                        indent: block.indent.clone(),
-                                        delimiter: block.delimiter.clone(),
-                                        contents: block.contents.clone(),
-                                        lines: 0,
-                                    },
-                                )
-                            };
-
-                            // 2. Insert a `UNICODE_CURSOR_MARKER` at the cursor
-                            //    location specified by `dom_offsets`, then convert
-                            //    the HTML to Markdown.
-                            let translated = doc_block_html_to_markdown(
-                                vec![CodeDocBlock::DocBlock(doc_block)],
-                                &Some(dom_offsets),
+                        // 1. Find the HTML (for a Markdown document) or the doc
+                        //    block the cursor is in. Create a temporary
+                        //    one-element `Vec<CodeDocBlock>` from this.
+                        //    containing only the doc block identified above.
+                        let (preceding_newlines, doc_block) = if is_markdown {
+                            // 1. For Markdown, there are zero preceding
+                            //    newlines and the relevant HTML is in
+                            //    `self.code_mirror_doc`.
+                            (
+                                0,
+                                DocBlock {
+                                    indent: String::new(),
+                                    delimiter: String::new(),
+                                    contents: self.code_mirror_doc.clone(),
+                                    lines: 0,
+                                },
                             )
-                            .ok()?;
-                            let CodeDocBlock::DocBlock(db) = &translated[0] else {
-                                return None;
-                            };
+                        } else {
+                            // 1. Locate the relevant doc block, identified by
+                            //    its starting offset matching `from`. If not
+                            //    found, abort and return `None`.
+                            let blocks = self.code_mirror_doc_blocks.as_ref().unwrap();
+                            let block = blocks.iter().find(|b| b.from == from)?;
 
-                            // 3. Count newlines before the marker and add them to
-                            //    the preceding-newlines total for the final line
-                            //    number. If the marker is absent, treat its
-                            //    position as 0 (contributing zero newlines), even
-                            //    if an existing marker precedes the inserted one.
-                            let marker_byte = db.contents.find(UNICODE_CURSOR_MARKER).unwrap_or(0);
-                            let newlines_before_marker = db.contents[..marker_byte]
+                            // 2. Count all newlines in `self.code_mirror_doc`
+                            //    which precede `from`. `from` is in UTF-16 code
+                            //    units; convert to a byte index first.
+                            let byte_idx = byte_index_of(&self.code_mirror_doc, from);
+                            let preceding_newlines = self.code_mirror_doc[..byte_idx]
                                 .chars()
                                 .filter(|&c| c == '\n')
                                 .count();
 
-                            // CodeMirror uses 1-based line numbers.
-                            Some(CursorPosition::Line(
-                                (preceding_newlines + newlines_before_marker + 1) as u32,
-                            ))
-                        })()
-                    } else {
-                        update_message_contents.cursor_position
-                    };
+                            (
+                                preceding_newlines,
+                                DocBlock {
+                                    indent: block.indent.clone(),
+                                    delimiter: block.delimiter.clone(),
+                                    contents: block.contents.clone(),
+                                    lines: 0,
+                                },
+                            )
+                        };
+
+                        // 2. Insert a `UNICODE_CURSOR_MARKER` at the cursor
+                        //    location specified by `dom_offsets`, then convert
+                        //    the HTML to Markdown.
+                        let translated = doc_block_html_to_markdown(
+                            vec![CodeDocBlock::DocBlock(doc_block)],
+                            &Some((dom_path, dom_offset)),
+                        )
+                        .ok()?;
+                        let CodeDocBlock::DocBlock(db) = &translated[0] else {
+                            return None;
+                        };
+
+                        // 3. Count newlines before the marker and add them to
+                        //    the preceding-newlines total for the final line
+                        //    number. If the marker is absent, treat its
+                        //    position as 0 (contributing zero newlines), even
+                        //    if an existing marker precedes the inserted one.
+                        let marker_byte = db.contents.find(UNICODE_CURSOR_MARKER).unwrap_or(0);
+                        let newlines_before_marker = db.contents[..marker_byte]
+                            .chars()
+                            .filter(|&c| c == '\n')
+                            .count();
+
+                        // CodeMirror uses 1-based line numbers.
+                        Some(CursorPosition::Line(
+                            (preceding_newlines + newlines_before_marker + 1) as u32,
+                        ))
+                    })()
+                } else {
+                    update_message_contents.cursor_position
+                };
 
                 debug!("Sending update id = {}", client_message.id);
                 queue_send_func!(self.to_ide_tx.send(EditorMessage {

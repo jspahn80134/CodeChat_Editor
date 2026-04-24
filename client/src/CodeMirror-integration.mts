@@ -659,7 +659,7 @@ const on_dirty = (
         // the actual div. But I don't know how.
         mathJaxUnTypeset(contents_div);
         const contents = is_tinymce
-            ? tinymce.activeEditor!.save()
+            ? tinymce.activeEditor!.save({ format: "raw" })
             : contents_div.innerHTML;
         await mathJaxTypeset(contents_div);
         current_view.dispatch({
@@ -816,8 +816,9 @@ export const DocBlockPlugin = ViewPlugin.fromClass(
                         const old_contents_div = document.createElement("div");
                         old_contents_div.className = "CodeChat-doc-contents";
                         old_contents_div.contentEditable = "true";
-                        old_contents_div.innerHTML =
-                            tinymce.activeEditor!.getContent();
+                        old_contents_div.innerHTML = tinymce.activeEditor!.save(
+                            { format: "raw" },
+                        );
                         tinymce_div.parentNode!.insertBefore(
                             old_contents_div,
                             null,
@@ -1090,6 +1091,18 @@ export const CodeMirror_load = async (
                         setTimeout(() => on_dirty(target_or_false));
                     },
                 );
+
+                // Send updates on cursor movement.
+                editor.on(
+                    "SelectionChange",
+                    (
+                        _event: EditorEvent<
+                            Events.EditorEventMap["SelectionChange"]
+                        >,
+                    ) => {
+                        startAutosaveTimer();
+                    },
+                );
             },
         });
     } else {
@@ -1221,18 +1234,32 @@ export const set_CodeMirror_positions = (
 ) => {
     // If a doc block has focus, then the CodeMirror selection reports line 1.
     // Use the starting line number of the doc block instead.
-    let cursor_line;
     const doc_block = document.activeElement?.closest(".CodeChat-doc");
+    let cp;
     if (doc_block) {
-        cursor_line = current_view.state.doc.lineAt(
-            current_view.posAtDOM(doc_block),
-        ).number;
+        const from = current_view.posAtDOM(doc_block);
+        const location = saveSelection();
+        // If there's a selection in the doc block, pass the DOM location; otherwise, pass the line where the doc block starts.
+        if (location.selection_offset === undefined) {
+            cp = { Line: current_view.state.doc.lineAt(from).number };
+        } else {
+            cp = {
+                DomLocation: {
+                    dom_path: location.selection_path,
+                    dom_offset: location.selection_offset,
+                    from: current_view.posAtDOM(doc_block),
+                },
+            };
+        }
     } else {
-        cursor_line = current_view.state.doc.lineAt(
-            current_view.state.selection.main.from,
-        ).number;
+        // For a code block, we can simply retrieve the line number.
+        cp = {
+            Line: current_view.state.doc.lineAt(
+                current_view.state.selection.main.from,
+            ).number,
+        };
     }
-    update_message_contents.cursor_position = { Line: cursor_line };
+    update_message_contents.cursor_position = cp;
 
     // `current_view.viewport.from` isn't accurate, since it's not really the
     // top line, but a margin before it; see the

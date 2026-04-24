@@ -557,7 +557,7 @@ async fn test_vscode_ide_websocket8() {
                             to: 1,
                             indent: "".to_string(),
                             delimiter: "#".to_string(),
-                            contents: "<p>testing</p>\n".to_string()
+                            contents: "<p>testing</p>".to_string()
                         }],
                     }),
                     version: 0.0,
@@ -689,7 +689,7 @@ async fn test_vscode_ide_websocket7() {
                             to: 1,
                             indent: "".to_string(),
                             delimiter: "#".to_string(),
-                            contents: "<p>more</p>\n".to_string()
+                            contents: "<p>more</p>".to_string()
                         }]
                     }),
                     version: 0.0,
@@ -769,7 +769,7 @@ async fn test_vscode_ide_websocket7() {
                             to: 7,
                             indent: "".to_string(),
                             delimiter: "#".to_string(),
-                            contents: "<p>most</p>\n".to_string()
+                            contents: "<p>most</p>".to_string()
                         })],
                         version: 0.0,
                     }),
@@ -996,7 +996,7 @@ async fn test_vscode_ide_websocket4() {
                             to: 1,
                             indent: "".to_string(),
                             delimiter: "#".to_string(),
-                            contents: "<p>test.py</p>\n".to_string()
+                            contents: "<p>test.py</p>".to_string()
                         }],
                     }),
                     version: cast!(&msg.message, EditorMessageContents::Update)

@@ -98,7 +98,7 @@ async fn test_server_core(
     let doc_block_contents = driver.find(By::Css(contents_css)).await.unwrap();
     assert_eq!(
         doc_block_contents.inner_html().await.unwrap(),
-        "<p>Test</p>\n"
+        "<p>Test</p>"
     );
 
     // Focus it.
@@ -767,7 +767,7 @@ async fn test_client_updates_core(
             id: client_id,
             message: EditorMessageContents::Update(UpdateMessageContents {
                 file_path: path_str.clone(),
-                cursor_position: Some(CursorPosition::Line(1)),
+                cursor_position: Some(CursorPosition::Line(2)),
                 scroll_position: Some(1.0),
                 is_re_translation: false,
                 contents: Some(CodeChatForWeb {

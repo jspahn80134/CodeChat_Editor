@@ -375,10 +375,13 @@ pub enum CursorPosition {
         // The `from` location (character offset) of the doc block the cursor is
         // in.
         from: usize,
-        // The index of each successive node in the DOM, ending with the offset
-        // within the last node (which must be a text node), of the current
+        // The index of each successive node in the DOM of the current
         // selection (cursor location).
-        dom_offsets: Vec<usize>,
+        dom_path: Vec<usize>,
+        // The offset
+        // within the last node (which must be a text node) of the current
+        // selection (cursor location).
+        dom_offset: usize,
     },
 }
 
@@ -1496,7 +1499,7 @@ async fn basic_validator(
     if let Some(app_state) = &req.app_data::<WebAppState>()
         && let Some(expected_credentials) = app_state.credentials.as_ref()
         && credentials.user_id() == expected_credentials.username
-        && credentials.password() == Some(&expected_credentials.password)
+        && credentials.password() == Some(expected_credentials.password.as_str())
     {
         Ok(req)
     } else {
