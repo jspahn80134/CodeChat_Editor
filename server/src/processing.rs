@@ -24,6 +24,7 @@ use std::{
     borrow::Cow,
     cell::RefCell,
     cmp::{max, min},
+    collections::HashSet,
     ffi::OsStr,
     io,
     iter::Map,
@@ -926,10 +927,14 @@ pub fn source_to_codechat_for_web(
             cfg.allow_noncompliant_unquoted_attribute_values = false;
             cfg.allow_optimal_entities = false;
             cfg.allow_removing_spaces_between_attributes = false;
-            cfg.keep_comments = true;
             cfg.keep_closing_tags = true;
+            cfg.keep_comments = true;
             cfg.keep_html_and_head_opening_tags = true;
             cfg.minify_doctype = false;
+            let mut override_whitespace: HashSet<Vec<u8>> = HashSet::new();
+            override_whitespace.insert(b"wc-mermaid".to_vec());
+            override_whitespace.insert(b"graphviz-graph".to_vec());
+            cfg.override_whitespace = override_whitespace;
             let html = String::from_utf8(minify(html.as_bytes(), &cfg))?;
             // 4. Split on the separator.
             let mut doc_block_contents_iter = html.split(DOC_BLOCK_SEPARATOR_SPLIT_STRING);

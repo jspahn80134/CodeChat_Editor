@@ -186,7 +186,7 @@ async fn test_5_core(
     let doc_block_contents = driver.find(By::Css(contents_css)).await.unwrap();
     doc_block_contents.click().await.unwrap();
     // The click produces an updated cursor/scroll location after an autosave
-    // delay.
+    // delay. Initial ID: 4.
     let mut client_id = INITIAL_CLIENT_MESSAGE_ID;
     assert_eq!(
         codechat_server.get_message_timeout(TIMEOUT).await.unwrap(),
@@ -201,6 +201,7 @@ async fn test_5_core(
             })
         }
     );
+    // ID is 7.
     client_id += MESSAGE_ID_INCREMENT;
 
     // Refind it, since it's now switched with a TinyMCE editor.
@@ -243,6 +244,7 @@ async fn test_5_core(
     );
     let version = client_version;
     codechat_server.send_result(client_id, None).await.unwrap();
+    // ID: 10.
     client_id += MESSAGE_ID_INCREMENT;
 
     // The Server sends the Client a wrapped version of the text; the Client
@@ -306,7 +308,7 @@ async fn test_5_core(
     );
     //let version = client_version;
     codechat_server.send_result(client_id, None).await.unwrap();
-    //client_id += MESSAGE_ID_INCREMENT;
+    client_id += MESSAGE_ID_INCREMENT;
 
     // The Server sends the Client a wrapped version of the text; the Client
     // replies with a Result(Ok).
@@ -318,6 +320,22 @@ async fn test_5_core(
         }
     );
     //server_id += MESSAGE_ID_INCREMENT;
+
+    // The Client sends an updated cursor located after the edit.
+    assert_eq!(
+        codechat_server.get_message_timeout(TIMEOUT).await.unwrap(),
+        EditorMessage {
+            id: client_id,
+            message: EditorMessageContents::Update(UpdateMessageContents {
+                file_path: path_str.clone(),
+                cursor_position: Some(CursorPosition::Line(1)),
+                scroll_position: Some(1.0),
+                is_re_translation: false,
+                contents: None,
+            })
+        }
+    );
+    //client_id += MESSAGE_ID_INCREMENT;
 
     assert_no_more_messages(&codechat_server).await;
 
