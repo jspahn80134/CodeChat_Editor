@@ -33,6 +33,7 @@ use std::{
     rc::Rc,
     slice::Iter,
     string::FromUtf8Error,
+    sync::LazyLock,
 };
 
 // ### Third-party
@@ -56,7 +57,7 @@ use html5ever::{
 use imara_diff::{Algorithm, Diff, Hunk, InternedInput, TokenSource};
 use lazy_static::lazy_static;
 use markup5ever_rcdom::{Node, NodeData, RcDom, SerializableHandle};
-use minify_html::minify;
+use minify_html;
 use phf::phf_map;
 use pulldown_cmark::{Options, Parser, html};
 use regex::Regex;
@@ -922,20 +923,7 @@ pub fn source_to_codechat_for_web(
             // 3. Hydrate the cleaned HTML.
             let html = hydrate_html(&html)
                 .map_err(|e| SourceToCodeChatForWebError::ParseFailed(e.to_string()))?;
-            // Use a spec-compliant minifier.
-            let mut cfg = minify_html::Cfg::new();
-            cfg.allow_noncompliant_unquoted_attribute_values = false;
-            cfg.allow_optimal_entities = false;
-            cfg.allow_removing_spaces_between_attributes = false;
-            cfg.keep_closing_tags = true;
-            cfg.keep_comments = true;
-            cfg.keep_html_and_head_opening_tags = true;
-            cfg.minify_doctype = false;
-            let mut override_whitespace: HashSet<Vec<u8>> = HashSet::new();
-            override_whitespace.insert(b"wc-mermaid".to_vec());
-            override_whitespace.insert(b"graphviz-graph".to_vec());
-            cfg.override_whitespace = override_whitespace;
-            let html = String::from_utf8(minify(html.as_bytes(), &cfg))?;
+            let html = minify(&html)?;
             // 4. Split on the separator.
             let mut doc_block_contents_iter = html.split(DOC_BLOCK_SEPARATOR_SPLIT_STRING);
             // <a class="fence-mending-end"></a>
@@ -975,6 +963,28 @@ pub fn source_to_codechat_for_web(
     };
 
     Ok(TranslationResults::CodeChat(codechat_for_web))
+}
+
+// Options for a spec-compliant minifier.
+static MINIFY_OPTIONS: LazyLock<minify_html::Cfg> = LazyLock::new(|| {
+    let mut cfg = minify_html::Cfg::new();
+    cfg.allow_noncompliant_unquoted_attribute_values = false;
+    cfg.allow_optimal_entities = false;
+    cfg.allow_removing_spaces_between_attributes = false;
+    cfg.keep_closing_tags = true;
+    cfg.keep_comments = true;
+    cfg.keep_html_and_head_opening_tags = true;
+    cfg.minify_doctype = false;
+    let mut override_whitespace: HashSet<Vec<u8>> = HashSet::new();
+    override_whitespace.insert(b"wc-mermaid".to_vec());
+    override_whitespace.insert(b"graphviz-graph".to_vec());
+    cfg.override_whitespace = override_whitespace;
+    cfg
+});
+
+/// A spec-compliant minifier.
+pub fn minify(html: &str) -> Result<String, FromUtf8Error> {
+    String::from_utf8(minify_html::minify(html.as_bytes(), &MINIFY_OPTIONS))
 }
 
 // Compute the length of the provided string in UTF16 characters.
@@ -1124,9 +1134,9 @@ fn html_to_tree(
 
 // A framework to transform HTML by parsing it to a DOM tree, walking the tree,
 // then serializing the tree back to an HTML string.
-pub fn transform_html<T: FnOnce(Rc<Node>)>(html: &str, transform: T) -> io::Result<String> {
+pub fn transform_html<T: FnOnce(&Rc<Node>)>(html: &str, transform: T) -> io::Result<String> {
     let tree = html_to_tree(html, &None)?;
-    transform(tree.clone());
+    transform(&tree);
 
     // Serialize the transformed DOM back to a string.
     let so = SerializeOpts {
@@ -1168,7 +1178,7 @@ fn hydrate_html(html: &str) -> io::Result<String> {
     transform_html(html, hydrating_walk_node)
 }
 
-fn hydrating_walk_node(node: Rc<Node>) {
+fn hydrating_walk_node(node: &Rc<Node>) {
     for child in node.children.borrow_mut().iter_mut() {
         let possible_replacement_child =
         // Look for a `<pre>` tag
@@ -1216,10 +1226,10 @@ fn hydrating_walk_node(node: Rc<Node>) {
 
         // Replace the child if we found a replacement; otherwise, walk it.
         if let Some(replacement_child) = possible_replacement_child {
-            replacement_child.parent.set(Some(Rc::downgrade(&node)));
+            replacement_child.parent.set(Some(Rc::downgrade(node)));
             *child = replacement_child;
         } else {
-            hydrating_walk_node(child.clone());
+            hydrating_walk_node(child);
         }
     }
 }
@@ -1301,53 +1311,120 @@ fn replace_math_node(child: &Rc<Node>, is_hydrate: bool) -> Option<Rc<Node>> {
     }
 }
 
-fn dehydrating_walk_node(node: &Rc<Node>) {
-    for child in node.children.borrow_mut().iter_mut() {
-        // Look for a custom element tag
-        let possible_replacement_child = if let Some(child_name) = get_node_tag_name(child)
-        && let Some(language_name) = CUSTOM_ELEMENT_TO_CODE_BLOCK_LANGUAGE.get(child_name)
-            // with no attributes
-            && let NodeData::Element {
-                attrs: ref_attrs, ..
-            } = &child.data
-            && ref_attrs.borrow().is_empty()
-            // and only one Text child
-            && let text_children = &child.children.borrow()
-            && text_children.len() == 1
-            && let Some(text_child) = text_children.iter().next()
-            && let NodeData::Text { .. } = &text_child.data
+pub fn remove_tinymce_data(
+    parent: &Rc<Node>,
+    // The index of the node in parent.children.
+    index: usize,
+) -> Option<Rc<Node>> {
+    let node = parent.children.borrow()[index].clone();
+    // Remove TinyMCE temp attributes produced in the raw format.
+    if let NodeData::Element { name, attrs, .. } = &node.data {
+        // Look for any temporary elements inserted for GUI manipulation.
+        if name.local == *"span"
+            && attrs
+                .borrow()
+                .iter()
+                .any(|attr| attr.name.local == *"class" && attr.value.starts_with("mce"))
         {
-            // Create `<pre><code class="from language_name">text_child
-            // contents</code></pre>`.
-            let pre = Node::new(NodeData::Element {
-                name: QualName::new(None, Namespace::from(""), LocalName::from("pre")),
-                attrs: RefCell::new(vec![]),
-                template_contents: RefCell::new(None),
-                mathml_annotation_xml_integration_point: false,
-            });
-            let code = Node::new(NodeData::Element {
-                name: QualName::new(None, Namespace::from(""), LocalName::from("code")),
-                attrs: RefCell::new(vec![Attribute {
-                    name: QualName::new(None, Namespace::from(""), LocalName::from("class")),
-                    value: (*language_name).into(),
-                }]),
-                template_contents: RefCell::new(None),
-                mathml_annotation_xml_integration_point: false,
-            });
-            code.parent.set(Some(Rc::downgrade(&pre)));
-            code.children.borrow_mut().push(text_child.clone());
-            pre.children.borrow_mut().push(code);
-            Some(pre)
-        } else {
-            replace_math_node(child, false)
-        };
+            // Replace this element with its children. First, update the children with the new parent.
+            let new_parent = node
+                .parent
+                .take()
+                .unwrap_or_else(|| panic!("Must be non-root node, but saw {:#?}.", node.data));
+            for child in node.children.borrow_mut().iter_mut() {
+                child.parent.set(Some(new_parent.clone()));
+            }
 
-        // Replace the child if we found a replacement; otherwise, walk it.
-        if let Some(replacement_child) = possible_replacement_child {
-            *child = replacement_child;
+            // Insert the children in place of the node.
+            let children: Vec<_> = node.children.borrow_mut().to_vec();
+            let no_children = children.is_empty();
+            parent.children.borrow_mut().splice(index..=index, children);
+            // Process the first child which replaced the current node, since it hasn't been processed yet, then return it as the updated node.
+            return if no_children {
+                None
+            } else {
+                remove_tinymce_data(parent, index)
+            };
         } else {
-            dehydrating_walk_node(child);
+            // If we didn't remove this element, then filter out unwanted attributes.
+            attrs.borrow_mut().retain(|attr| {
+                !(attr.name.local.starts_with("data-mce-")
+                    || (attr.name.local == *"class" && attr.value.starts_with("mce-")))
+            });
         }
+    }
+    Some(node.clone())
+}
+
+/// Walk a node, dehydrating it by removing TineMCE temporary attributes, changing math to pulldown-cmark's output, and changing graphviz/Mermaid to fenced code blocks.
+fn dehydrating_walk_node(node: &Rc<Node>) {
+    let mut index = 0;
+    // Avoid a `while` loop, since accessing `node.children` requires a borrow held for the body of the loop.
+    while index < node.children.borrow().len() {
+        // Remove TinyMCE data from the child at `index`; if the child was
+        // spliced away (no replacement), the slot is gone re-process this index.
+        if remove_tinymce_data(node, index).is_none() {
+            continue;
+        }
+
+        // Compute the replacement (if any) inside a block so `borrow_mut` is
+        // dropped before the recursive walk, which may itself need `borrow_mut`
+        // via `remove_tinymce_data`.
+        let child_to_walk = {
+            let mut children = node.children.borrow_mut();
+            if index >= children.len() {
+                break;
+            }
+            let child = &mut children[index];
+            let replacement = if let Some(child_name) = get_node_tag_name(child)
+                && let Some(language_name) = CUSTOM_ELEMENT_TO_CODE_BLOCK_LANGUAGE.get(child_name)
+                // with no attributes
+                && let NodeData::Element {
+                    attrs: ref_attrs, ..
+                } = &child.data
+                && ref_attrs.borrow().is_empty()
+                // and only one Text child
+                && let text_children = &child.children.borrow()
+                && text_children.len() == 1
+                && let Some(text_child) = text_children.iter().next()
+                && let NodeData::Text { .. } = &text_child.data
+            {
+                // Create `<pre><code class="from language_name">text_child
+                // contents</code></pre>`.
+                let pre = Node::new(NodeData::Element {
+                    name: QualName::new(None, Namespace::from(""), LocalName::from("pre")),
+                    attrs: RefCell::new(vec![]),
+                    template_contents: RefCell::new(None),
+                    mathml_annotation_xml_integration_point: false,
+                });
+                let code = Node::new(NodeData::Element {
+                    name: QualName::new(None, Namespace::from(""), LocalName::from("code")),
+                    attrs: RefCell::new(vec![Attribute {
+                        name: QualName::new(None, Namespace::from(""), LocalName::from("class")),
+                        value: (*language_name).into(),
+                    }]),
+                    template_contents: RefCell::new(None),
+                    mathml_annotation_xml_integration_point: false,
+                });
+                code.parent.set(Some(Rc::downgrade(&pre)));
+                code.children.borrow_mut().push(text_child.clone());
+                pre.children.borrow_mut().push(code);
+                Some(pre)
+            } else {
+                replace_math_node(child, false)
+            };
+            if let Some(replacement_child) = replacement {
+                *child = replacement_child;
+                None
+            } else {
+                Some(children[index].clone())
+            }
+        };
+        // `borrow_mut` is now dropped; safe to recurse.
+        if let Some(child) = child_to_walk {
+            dehydrating_walk_node(&child);
+        }
+        index += 1;
     }
 }
 
