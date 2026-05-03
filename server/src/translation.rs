@@ -613,7 +613,7 @@ pub async fn translation_task(
                         EditorMessageContents::Update(_) => continue_loop = tt.ide_update(ide_message).await,
                         EditorMessageContents::Capture(capture_event) => {
                             tt.capture_context.update_from_wire(&capture_event);
-                            log_capture_event(&app_state, capture_event);
+                            log_capture_event(&app_state, *capture_event);
                             send_response(&tt.to_ide_tx, ide_message.id, Ok(ResultOkTypes::Void)).await;
                         },
 
@@ -713,7 +713,7 @@ pub async fn translation_task(
                         EditorMessageContents::Update(_) => continue_loop = tt.client_update(client_message).await,
                         EditorMessageContents::Capture(capture_event) => {
                             tt.capture_context.update_from_wire(&capture_event);
-                            log_capture_event(&app_state, capture_event);
+                            log_capture_event(&app_state, *capture_event);
                             send_response(&tt.to_client_tx, client_message.id, Ok(ResultOkTypes::Void)).await;
                         },
 

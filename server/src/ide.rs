@@ -257,7 +257,7 @@ impl CodeChatEditorServer {
         &self,
         capture_event: webserver::CaptureEventWire,
     ) -> std::io::Result<f64> {
-        self.send_message_timeout(EditorMessageContents::Capture(capture_event))
+        self.send_message_timeout(EditorMessageContents::Capture(Box::new(capture_event)))
             .await
     }
 

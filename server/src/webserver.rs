@@ -208,7 +208,7 @@ pub enum EditorMessageContents {
         Option<bool>,
     ),
     /// Record an instrumentation event. Valid destinations: Server.
-    Capture(CaptureEventWire),
+    Capture(Box<CaptureEventWire>),
 
     // #### These messages may only be sent by the IDE.
     /// This is the first message sent when the IDE starts up. It may only be
