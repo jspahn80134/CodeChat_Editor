@@ -88,6 +88,12 @@ impl CodeChatEditorServer {
     }
 
     #[napi]
+    pub fn get_capture_status(&self) -> Result<String, Error> {
+        serde_json::to_string(&self.0.capture_status())
+            .map_err(|err| Error::new(Status::GenericFailure, err.to_string()))
+    }
+
+    #[napi]
     pub async fn send_message_current_file(&self, url: String) -> std::io::Result<f64> {
         self.0.send_message_current_file(url).await
     }

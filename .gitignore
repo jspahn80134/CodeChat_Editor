@@ -21,8 +21,14 @@
 #
 # dist build output
 target/
+/server/bindings/
 
-# The runtime capture config is resolved from the repository root.
+# Runtime capture configuration and local fallback capture logs.
+/capture_config.json
+/capture-events-fallback.jsonl
+/capture-metrics-*.csv
+/server/scripts/output
+/server/scripts/capture-metrics-*.csv
 server/capture_config.json
 
 # CodeChat Editor lexer: python. See TODO.

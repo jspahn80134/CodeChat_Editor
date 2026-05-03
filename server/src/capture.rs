@@ -57,7 +57,14 @@
 // * `timestamp` – RFC3339 timestamp (in UTC).
 // * `data` – JSON payload with event-specific details.
 
-use std::{io, thread};
+use std::{
+    env,
+    fs::{self, OpenOptions},
+    io::{self, Write},
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+    thread,
+};
 
 use chrono::{DateTime, Utc};
 use log::{debug, error, info, warn};
@@ -79,6 +86,13 @@ pub mod event_types {
     pub const SESSION_END: &str = "session_end";
     pub const COMPILE_END: &str = "compile_end";
     pub const RUN_END: &str = "run_end";
+    pub const TASK_START: &str = "task_start";
+    pub const TASK_SUBMIT: &str = "task_submit";
+    pub const DEBUG_TASK_START: &str = "debug_task_start";
+    pub const DEBUG_TASK_SUBMIT: &str = "debug_task_submit";
+    pub const HANDOFF_START: &str = "handoff_start";
+    pub const HANDOFF_END: &str = "handoff_end";
+    pub const REFLECTION_PROMPT_INSERTED: &str = "reflection_prompt_inserted";
 }
 
 /// Configuration used to construct the PostgreSQL connection string.
@@ -88,6 +102,8 @@ pub mod event_types {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaptureConfig {
     pub host: String,
+    #[serde(default)]
+    pub port: Option<u16>,
     pub user: String,
     pub password: String,
     pub dbname: String,
@@ -96,15 +112,110 @@ pub struct CaptureConfig {
     /// in `data` if desired.
     #[serde(default)]
     pub app_id: Option<String>,
+    /// Local JSONL file used when PostgreSQL is unavailable.
+    #[serde(default)]
+    pub fallback_path: Option<PathBuf>,
 }
 
 impl CaptureConfig {
     /// Build a libpq-style connection string.
     pub fn to_conn_str(&self) -> String {
+        let mut parts = vec![
+            format!("host={}", self.host),
+            format!("user={}", self.user),
+            format!("password={}", self.password),
+            format!("dbname={}", self.dbname),
+        ];
+        if let Some(port) = self.port {
+            parts.push(format!("port={port}"));
+        }
+        parts.join(" ")
+    }
+
+    /// Return a human-readable summary that never includes the password.
+    pub fn redacted_summary(&self) -> String {
         format!(
-            "host={} user={} password={} dbname={}",
-            self.host, self.user, self.password, self.dbname
+            "host={}, port={:?}, user={}, dbname={}, app_id={:?}, fallback_path={:?}",
+            self.host, self.port, self.user, self.dbname, self.app_id, self.fallback_path
         )
+    }
+
+    /// Build capture configuration from environment variables. If no capture
+    /// host is configured, return `Ok(None)` so callers can fall back to a file.
+    pub fn from_env() -> Result<Option<Self>, String> {
+        let Some(host) = env_var_trimmed("CODECHAT_CAPTURE_HOST") else {
+            return Ok(None);
+        };
+
+        let port = match env_var_trimmed("CODECHAT_CAPTURE_PORT") {
+            Some(port) => Some(port.parse::<u16>().map_err(|err| {
+                format!("CODECHAT_CAPTURE_PORT must be a valid port number: {err}")
+            })?),
+            None => None,
+        };
+
+        Ok(Some(Self {
+            host,
+            port,
+            user: required_env_var("CODECHAT_CAPTURE_USER")?,
+            password: required_env_var("CODECHAT_CAPTURE_PASSWORD")?,
+            dbname: required_env_var("CODECHAT_CAPTURE_DBNAME")?,
+            app_id: env_var_trimmed("CODECHAT_CAPTURE_APP_ID"),
+            fallback_path: env_var_trimmed("CODECHAT_CAPTURE_FALLBACK_PATH").map(PathBuf::from),
+        }))
+    }
+}
+
+fn env_var_trimmed(name: &str) -> Option<String> {
+    env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn required_env_var(name: &str) -> Result<String, String> {
+    env_var_trimmed(name).ok_or_else(|| format!("{name} is required when capture env is used"))
+}
+
+/// Capture worker health, exposed through `/capture/status` and the VS Code
+/// status item.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CaptureStatus {
+    pub enabled: bool,
+    pub state: String,
+    pub queued_events: u64,
+    pub persisted_events: u64,
+    pub fallback_events: u64,
+    pub failed_events: u64,
+    pub last_error: Option<String>,
+    pub fallback_path: Option<PathBuf>,
+}
+
+impl CaptureStatus {
+    pub fn disabled() -> Self {
+        Self {
+            enabled: false,
+            state: "disabled".to_string(),
+            queued_events: 0,
+            persisted_events: 0,
+            fallback_events: 0,
+            failed_events: 0,
+            last_error: None,
+            fallback_path: None,
+        }
+    }
+
+    fn starting(fallback_path: Option<PathBuf>) -> Self {
+        Self {
+            enabled: true,
+            state: "starting".to_string(),
+            queued_events: 0,
+            persisted_events: 0,
+            fallback_events: 0,
+            failed_events: 0,
+            last_error: None,
+            fallback_path,
+        }
     }
 }
 
@@ -175,6 +286,7 @@ type WorkerMsg = CaptureEvent;
 #[derive(Clone)]
 pub struct EventCapture {
     tx: mpsc::UnboundedSender<WorkerMsg>,
+    status: Arc<Mutex<CaptureStatus>>,
 }
 
 impl EventCapture {
@@ -184,17 +296,24 @@ impl EventCapture {
     /// This function is synchronous so it can be called from non-async server
     /// setup code. It spawns an async task internally which performs the
     /// database connection and event processing.
-    pub fn new(config: CaptureConfig) -> Result<Self, io::Error> {
+    pub fn new(mut config: CaptureConfig) -> Result<Self, io::Error> {
+        let fallback_path = config
+            .fallback_path
+            .get_or_insert_with(|| PathBuf::from("capture-events-fallback.jsonl"))
+            .clone();
         let conn_str = config.to_conn_str();
+        let status = Arc::new(Mutex::new(CaptureStatus::starting(Some(
+            fallback_path.clone(),
+        ))));
 
         // High-level DB connection details (no password).
         info!(
-            "Capture: preparing PostgreSQL connection (host={}, dbname={}, user={}, app_id={:?})",
-            config.host, config.dbname, config.user, config.app_id
+            "Capture: preparing PostgreSQL connection ({})",
+            config.redacted_summary()
         );
-        debug!("Capture: raw PostgreSQL connection string: {}", conn_str);
 
         let (tx, mut rx) = mpsc::unbounded_channel::<WorkerMsg>();
+        let status_worker = status.clone();
 
         // Create a dedicated runtime so capture can be started from sync code
         // before the Actix/Tokio server runtime exists.
@@ -208,16 +327,27 @@ impl EventCapture {
                     .expect("Capture: failed to build Tokio runtime");
 
                 runtime.block_on(async move {
-                    info!("Capture: attempting to connect to PostgreSQL…");
+                    info!("Capture: attempting to connect to PostgreSQL.");
 
                     match tokio_postgres::connect(&conn_str, NoTls).await {
                         Ok((client, connection)) => {
                             info!("Capture: successfully connected to PostgreSQL.");
+                            update_status(&status_worker, |status| {
+                                status.state = "database".to_string();
+                                status.last_error = None;
+                            });
 
                             // Drive the connection in its own task.
+                            let status_connection = status_worker.clone();
                             tokio::spawn(async move {
                                 if let Err(err) = connection.await {
                                     error!("Capture PostgreSQL connection error: {err}");
+                                    update_status(&status_connection, |status| {
+                                        status.state = "fallback".to_string();
+                                        status.last_error = Some(format!(
+                                            "PostgreSQL connection error: {err}"
+                                        ));
+                                    });
                                 }
                             });
 
@@ -238,7 +368,25 @@ impl EventCapture {
                                         "Capture: FAILED to insert event (type={}, user_id={}): {err}",
                                         event.event_type, event.user_id
                                     );
+                                    update_status(&status_worker, |status| {
+                                        status.state = "fallback".to_string();
+                                        status.last_error = Some(format!(
+                                            "PostgreSQL insert failed: {err}"
+                                        ));
+                                    });
+                                    write_event_to_fallback(
+                                        &fallback_path,
+                                        &event,
+                                        &status_worker,
+                                        Some(format!("PostgreSQL insert failed: {err}")),
+                                    );
                                 } else {
+                                    update_status(&status_worker, |status| {
+                                        status.persisted_events += 1;
+                                        if status.state != "database" {
+                                            status.state = "database".to_string();
+                                        }
+                                    });
                                     debug!("Capture: event insert successful.");
                                 }
                             }
@@ -254,10 +402,26 @@ impl EventCapture {
 
                             log_pg_connect_error(&ctx, &err);
 
-                            // Drain and drop any events so we don't hold the sender.
-                            warn!("Capture: draining pending events after failed DB connection.");
-                            while rx.recv().await.is_some() {}
-                            warn!("Capture: all pending events dropped due to connection failure.");
+                            update_status(&status_worker, |status| {
+                                status.state = "fallback".to_string();
+                                status.last_error = Some(format!(
+                                    "PostgreSQL connection failed: {err}"
+                                ));
+                            });
+
+                            warn!(
+                                "Capture: writing pending events to fallback JSONL at {:?}.",
+                                fallback_path
+                            );
+                            while let Some(event) = rx.recv().await {
+                                write_event_to_fallback(
+                                    &fallback_path,
+                                    &event,
+                                    &status_worker,
+                                    Some("PostgreSQL connection unavailable".to_string()),
+                                );
+                            }
+                            warn!("Capture: event channel closed; fallback worker exiting.");
                         }
                     }
                 });
@@ -266,7 +430,7 @@ impl EventCapture {
                 io::Error::other(format!("Capture: failed to start worker thread: {err}"))
             })?;
 
-        Ok(Self { tx })
+        Ok(Self { tx, status })
     }
 
     /// Enqueue an event for insertion. This is non-blocking.
@@ -278,8 +442,85 @@ impl EventCapture {
 
         if let Err(err) = self.tx.send(event) {
             error!("Capture: FAILED to enqueue capture event: {err}");
+            update_status(&self.status, |status| {
+                status.failed_events += 1;
+                status.last_error = Some(format!("Failed to enqueue capture event: {err}"));
+            });
+        } else {
+            update_status(&self.status, |status| {
+                status.queued_events += 1;
+            });
         }
     }
+
+    pub fn status(&self) -> CaptureStatus {
+        self.status
+            .lock()
+            .map(|status| status.clone())
+            .unwrap_or_else(|_| {
+                let mut status = CaptureStatus::disabled();
+                status.last_error = Some("Capture status lock is poisoned".to_string());
+                status
+            })
+    }
+}
+
+fn update_status(status: &Arc<Mutex<CaptureStatus>>, f: impl FnOnce(&mut CaptureStatus)) {
+    match status.lock() {
+        Ok(mut guard) => f(&mut guard),
+        Err(err) => error!("Capture: unable to update status: {err}"),
+    }
+}
+
+fn write_event_to_fallback(
+    fallback_path: &Path,
+    event: &CaptureEvent,
+    status: &Arc<Mutex<CaptureStatus>>,
+    last_error: Option<String>,
+) {
+    match append_fallback_event(fallback_path, event) {
+        Ok(()) => update_status(status, |status| {
+            status.fallback_events += 1;
+            status.last_error = last_error;
+        }),
+        Err(err) => {
+            error!(
+                "Capture: FAILED to write fallback event to {:?}: {err}",
+                fallback_path
+            );
+            update_status(status, |status| {
+                status.failed_events += 1;
+                status.last_error = Some(format!("Fallback write failed: {err}"));
+            });
+        }
+    }
+}
+
+fn append_fallback_event(fallback_path: &Path, event: &CaptureEvent) -> io::Result<()> {
+    if let Some(parent) = fallback_path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent)?;
+    }
+
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(fallback_path)?;
+    let record = serde_json::json!({
+        "fallback_timestamp": Utc::now().to_rfc3339(),
+        "event": {
+            "user_id": event.user_id,
+            "assignment_id": event.assignment_id,
+            "group_id": event.group_id,
+            "file_path": event.file_path,
+            "event_type": event.event_type,
+            "timestamp": event.timestamp.to_rfc3339(),
+            "data": event.data,
+        }
+    });
+    writeln!(file, "{record}")?;
+    Ok(())
 }
 
 fn log_pg_connect_error(context: &str, err: &tokio_postgres::Error) {
@@ -358,10 +599,12 @@ mod tests {
     fn capture_config_to_conn_str_is_well_formed() {
         let cfg = CaptureConfig {
             host: "localhost".to_string(),
+            port: Some(5432),
             user: "alice".to_string(),
             password: "secret".to_string(),
             dbname: "codechat_capture".to_string(),
             app_id: Some("spring25-study".to_string()),
+            fallback_path: Some(PathBuf::from("capture-events-fallback.jsonl")),
         };
 
         let conn = cfg.to_conn_str();
@@ -371,6 +614,8 @@ mod tests {
         assert!(conn.contains("user=alice"));
         assert!(conn.contains("password=secret"));
         assert!(conn.contains("dbname=codechat_capture"));
+        assert!(conn.contains("port=5432"));
+        assert!(!cfg.redacted_summary().contains("secret"));
     }
 
     #[test]
@@ -427,18 +672,25 @@ mod tests {
         {
             "host": "db.example.com",
             "user": "bob",
+            "port": 5433,
             "password": "hunter2",
             "dbname": "cc_events",
-            "app_id": "fall25"
+            "app_id": "fall25",
+            "fallback_path": "capture-events-fallback.jsonl"
         }
         "#;
 
         let cfg: CaptureConfig = serde_json::from_str(json_text).expect("JSON should parse");
         assert_eq!(cfg.host, "db.example.com");
+        assert_eq!(cfg.port, Some(5433));
         assert_eq!(cfg.user, "bob");
         assert_eq!(cfg.password, "hunter2");
         assert_eq!(cfg.dbname, "cc_events");
         assert_eq!(cfg.app_id.as_deref(), Some("fall25"));
+        assert_eq!(
+            cfg.fallback_path.as_deref(),
+            Some(std::path::Path::new("capture-events-fallback.jsonl"))
+        );
 
         // And it should serialize back to JSON without error
         let _back = serde_json::to_string(&cfg).expect("Should serialize");

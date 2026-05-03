@@ -44,7 +44,15 @@
     "version": "0.1.54",
     "activationEvents": [
         "onCommand:extension.codeChatEditorActivate",
-        "onCommand:extension.codeChatEditorDeactivate"
+        "onCommand:extension.codeChatEditorDeactivate",
+        "onCommand:extension.codeChatCaptureStatus",
+        "onCommand:extension.codeChatInsertReflectionPrompt",
+        "onCommand:extension.codeChatCaptureTaskStart",
+        "onCommand:extension.codeChatCaptureTaskSubmit",
+        "onCommand:extension.codeChatCaptureDebugTaskStart",
+        "onCommand:extension.codeChatCaptureDebugTaskSubmit",
+        "onCommand:extension.codeChatCaptureHandoffStart",
+        "onCommand:extension.codeChatCaptureHandoffEnd"
     ],
     "contributes": {
         "configuration": {
@@ -62,6 +70,73 @@
                         "In the default external web browser"
                     ],
                     "markdownDescription": "Select the location of the CodeChat Editor Client. After changing this value, you **must** close then restart the CodeChat Editor extension."
+                },
+                "CodeChatEditor.Capture.Enabled": {
+                    "type": "boolean",
+                    "default": false,
+                    "markdownDescription": "Enable dissertation instrumentation capture."
+                },
+                "CodeChatEditor.Capture.ConsentEnabled": {
+                    "type": "boolean",
+                    "default": false,
+                    "markdownDescription": "Allow capture after participant consent is recorded for the current study session."
+                },
+                "CodeChatEditor.Capture.ParticipantId": {
+                    "type": "string",
+                    "default": "",
+                    "markdownDescription": "Pseudonymous participant identifier used as the capture user_id."
+                },
+                "CodeChatEditor.Capture.AssignmentId": {
+                    "type": "string",
+                    "default": "",
+                    "markdownDescription": "Assignment, lab, or task identifier attached to capture events."
+                },
+                "CodeChatEditor.Capture.GroupId": {
+                    "type": "string",
+                    "default": "",
+                    "markdownDescription": "Study group, section, or team identifier attached to capture events."
+                },
+                "CodeChatEditor.Capture.CourseId": {
+                    "type": "string",
+                    "default": "",
+                    "markdownDescription": "Course or deployment identifier attached to capture events."
+                },
+                "CodeChatEditor.Capture.TaskId": {
+                    "type": "string",
+                    "default": "",
+                    "markdownDescription": "Current study task identifier attached to capture events."
+                },
+                "CodeChatEditor.Capture.Mode": {
+                    "type": "string",
+                    "default": "treatment",
+                    "enum": [
+                        "treatment",
+                        "comparison",
+                        "capture-only"
+                    ],
+                    "enumDescriptions": [
+                        "Capture events and enable reflective prompt commands.",
+                        "Capture events without reflective prompt scaffolding.",
+                        "Capture events only for baseline or pilot instrumentation."
+                    ],
+                    "markdownDescription": "Study condition/mode attached to capture events."
+                },
+                "CodeChatEditor.Capture.HashFilePaths": {
+                    "type": "boolean",
+                    "default": true,
+                    "markdownDescription": "Hash local file paths before they are sent to capture storage."
+                },
+                "CodeChatEditor.Capture.PromptTemplates": {
+                    "type": "array",
+                    "default": [
+                        "What changed in your understanding of this code?",
+                        "What assumption are you making, and how could you test it?",
+                        "What would another developer need to know before maintaining this?"
+                    ],
+                    "items": {
+                        "type": "string"
+                    },
+                    "markdownDescription": "Reflective writing prompts available in treatment mode."
                 }
             }
         },
@@ -73,6 +148,38 @@
             {
                 "command": "extension.codeChatEditorDeactivate",
                 "title": "Disable the CodeChat Editor"
+            },
+            {
+                "command": "extension.codeChatCaptureStatus",
+                "title": "Show CodeChat Capture Status"
+            },
+            {
+                "command": "extension.codeChatInsertReflectionPrompt",
+                "title": "CodeChat: Insert Reflection Prompt"
+            },
+            {
+                "command": "extension.codeChatCaptureTaskStart",
+                "title": "CodeChat Capture: Task Start"
+            },
+            {
+                "command": "extension.codeChatCaptureTaskSubmit",
+                "title": "CodeChat Capture: Task Submit"
+            },
+            {
+                "command": "extension.codeChatCaptureDebugTaskStart",
+                "title": "CodeChat Capture: Debug Task Start"
+            },
+            {
+                "command": "extension.codeChatCaptureDebugTaskSubmit",
+                "title": "CodeChat Capture: Debug Task Submit"
+            },
+            {
+                "command": "extension.codeChatCaptureHandoffStart",
+                "title": "CodeChat Capture: Handoff Start"
+            },
+            {
+                "command": "extension.codeChatCaptureHandoffEnd",
+                "title": "CodeChat Capture: Handoff End"
             }
         ]
     },

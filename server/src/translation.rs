@@ -443,8 +443,13 @@ struct CaptureContext {
     user_id: Option<String>,
     assignment_id: Option<String>,
     group_id: Option<String>,
+    condition: Option<String>,
+    course_id: Option<String>,
+    task_id: Option<String>,
+    event_source: Option<String>,
     session_id: Option<String>,
     client_tz_offset_min: Option<i32>,
+    schema_version: Option<i32>,
 }
 
 impl CaptureContext {
@@ -457,6 +462,21 @@ impl CaptureContext {
         }
         if let Some(group_id) = &wire.group_id {
             self.group_id = Some(group_id.clone());
+        }
+        if let Some(condition) = &wire.condition {
+            self.condition = Some(condition.clone());
+        }
+        if let Some(course_id) = &wire.course_id {
+            self.course_id = Some(course_id.clone());
+        }
+        if let Some(task_id) = &wire.task_id {
+            self.task_id = Some(task_id.clone());
+        }
+        if let Some(event_source) = &wire.event_source {
+            self.event_source = Some(event_source.clone());
+        }
+        if let Some(schema_version) = wire.schema_version {
+            self.schema_version = Some(schema_version);
         }
         if let Some(client_tz_offset_min) = wire.client_tz_offset_min {
             self.client_tz_offset_min = Some(client_tz_offset_min);
@@ -486,11 +506,22 @@ impl CaptureContext {
             data.entry("session_id".to_string())
                 .or_insert_with(|| serde_json::json!(session_id));
         }
+        data.entry("source".to_string())
+            .or_insert_with(|| serde_json::json!("server_translation"));
 
         Some(CaptureEventWire {
+            event_id: None,
+            sequence_number: None,
+            schema_version: self.schema_version,
             user_id: self.user_id.clone()?,
             assignment_id: self.assignment_id.clone(),
             group_id: self.group_id.clone(),
+            condition: self.condition.clone(),
+            course_id: self.course_id.clone(),
+            task_id: self.task_id.clone(),
+            event_source: self.event_source.clone(),
+            language_id: None,
+            file_hash: None,
             file_path,
             event_type: event_type.to_string(),
             client_timestamp_ms: None,

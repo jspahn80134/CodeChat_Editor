@@ -53,7 +53,6 @@ import {
     MAX_MESSAGE_LENGTH,
 } from "../../../client/src/debug_enabled.mjs";
 import { ResultErrTypes } from "../../../client/src/rust-types/ResultErrTypes.js";
-import * as os from "os";
 
 import * as crypto from "crypto";
 
@@ -189,9 +188,18 @@ function classifyAtPosition(
 type CaptureEventData = Record<string, unknown>;
 
 interface CaptureEventPayload {
+    event_id?: string;
+    sequence_number?: number;
+    schema_version?: number;
     user_id: string;
     assignment_id?: string;
     group_id?: string;
+    condition?: string;
+    course_id?: string;
+    task_id?: string;
+    event_source?: string;
+    language_id?: string;
+    file_hash?: string;
     file_path?: string;
     event_type: string;
     client_timestamp_ms?: number;
@@ -199,29 +207,47 @@ interface CaptureEventPayload {
     data: CaptureEventData;
 }
 
-// TODO: replace these with something real (e.g., VS Code settings) For now, we
-// hard-code to prove that the pipeline works end-to-end.
-const CAPTURE_USER_ID: string = (() => {
-    try {
-        const u = os.userInfo().username;
-        if (u && u.trim().length > 0) {
-            return u.trim();
-        }
-    } catch (_) {
-        // fall through
-    }
+type CaptureMode = "treatment" | "comparison" | "capture-only";
 
-    // Fallbacks (should rarely be needed)
-    return process.env["USERNAME"] || process.env["USER"] || "unknown-user";
-})();
+interface StudySettings {
+    enabled: boolean;
+    consentEnabled: boolean;
+    participantId: string;
+    assignmentId?: string;
+    groupId?: string;
+    condition: CaptureMode;
+    courseId?: string;
+    taskId?: string;
+    hashFilePaths: boolean;
+    promptTemplates: string[];
+}
 
-const CAPTURE_ASSIGNMENT_ID = "demo-assignment";
-const CAPTURE_GROUP_ID = "demo-group";
+interface CaptureStatus {
+    enabled: boolean;
+    state: string;
+    queued_events: number;
+    persisted_events: number;
+    fallback_events: number;
+    failed_events: number;
+    last_error?: string | null;
+    fallback_path?: string | null;
+}
+
+const CAPTURE_SCHEMA_VERSION = 2;
+const CAPTURE_EVENT_SOURCE = "vscode_extension";
+const DEFAULT_REFLECTION_PROMPTS = [
+    "What changed in your understanding of this code?",
+    "What assumption are you making, and how could you test it?",
+    "What would another developer need to know before maintaining this?",
+];
 
 let capture_output_channel: vscode.OutputChannel | undefined;
 let captureFailureLogged = false;
 let captureTransportReady = false;
 let extensionCaptureSessionStarted = false;
+let captureSequenceNumber = 0;
+let capture_status_bar_item: vscode.StatusBarItem | undefined;
+let capture_status_timer: NodeJS.Timeout | undefined;
 
 // Simple classification of what the user is currently doing.
 type ActivityKind = "doc" | "code" | "other";
@@ -240,23 +266,114 @@ const DOC_LANG_IDS = new Set<string>([
 let lastActivityKind: ActivityKind = "other";
 let docSessionStart: number | null = null;
 
+function optionalString(value: unknown): string | undefined {
+    return typeof value === "string" && value.trim().length > 0
+        ? value.trim()
+        : undefined;
+}
+
+function loadStudySettings(): StudySettings {
+    const config = vscode.workspace.getConfiguration("CodeChatEditor.Capture");
+    const modeValue = optionalString(config.get("Mode"));
+    const condition: CaptureMode =
+        modeValue === "comparison" || modeValue === "capture-only"
+            ? modeValue
+            : "treatment";
+    const promptTemplates = config.get("PromptTemplates");
+
+    return {
+        enabled: config.get<boolean>("Enabled", false),
+        consentEnabled: config.get<boolean>("ConsentEnabled", false),
+        participantId: optionalString(config.get("ParticipantId")) ?? "",
+        assignmentId: optionalString(config.get("AssignmentId")),
+        groupId: optionalString(config.get("GroupId")),
+        condition,
+        courseId: optionalString(config.get("CourseId")),
+        taskId: optionalString(config.get("TaskId")),
+        hashFilePaths: config.get<boolean>("HashFilePaths", true),
+        promptTemplates:
+            Array.isArray(promptTemplates) && promptTemplates.length > 0
+                ? promptTemplates
+                      .filter(
+                          (prompt): prompt is string =>
+                              typeof prompt === "string",
+                      )
+                      .map((prompt) => prompt.trim())
+                      .filter((prompt) => prompt.length > 0)
+                : DEFAULT_REFLECTION_PROMPTS,
+    };
+}
+
+function captureDisabledReason(settings: StudySettings): string | undefined {
+    if (!settings.enabled) {
+        return "disabled in settings";
+    }
+    if (!settings.consentEnabled) {
+        return "waiting for consent";
+    }
+    if (settings.participantId.length === 0) {
+        return "participant id is not configured";
+    }
+    return undefined;
+}
+
+function hashText(value: string): string {
+    return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+function buildFileFields(
+    filePath: string | undefined,
+    settings: StudySettings,
+): Pick<CaptureEventPayload, "file_path" | "file_hash" | "language_id"> {
+    const document =
+        filePath === undefined
+            ? vscode.window.activeTextEditor?.document
+            : get_document(filePath);
+    if (filePath === undefined) {
+        return {
+            language_id: document?.languageId,
+        };
+    }
+    return {
+        file_path: settings.hashFilePaths ? undefined : filePath,
+        file_hash: settings.hashFilePaths ? hashText(filePath) : undefined,
+        language_id: document?.languageId,
+    };
+}
+
 // Helper to send a capture event to the Rust server.
 async function sendCaptureEvent(
     eventType: string,
     filePath?: string,
     data: CaptureEventData = {},
 ): Promise<void> {
+    const settings = loadStudySettings();
+    const disabledReason = captureDisabledReason(settings);
+    if (disabledReason !== undefined) {
+        updateCaptureStatusBar(`Capture: ${disabledReason}`, disabledReason);
+        return;
+    }
+    const fileFields = buildFileFields(filePath, settings);
     const payload: CaptureEventPayload = {
-        user_id: CAPTURE_USER_ID,
-        assignment_id: CAPTURE_ASSIGNMENT_ID,
-        group_id: CAPTURE_GROUP_ID,
-        file_path: filePath,
+        event_id: crypto.randomUUID(),
+        sequence_number: ++captureSequenceNumber,
+        schema_version: CAPTURE_SCHEMA_VERSION,
+        user_id: settings.participantId,
+        assignment_id: settings.assignmentId,
+        group_id: settings.groupId,
+        condition: settings.condition,
+        course_id: settings.courseId,
+        task_id: settings.taskId,
+        event_source: CAPTURE_EVENT_SOURCE,
+        ...fileFields,
         event_type: eventType,
         client_timestamp_ms: Date.now(),
         client_tz_offset_min: new Date().getTimezoneOffset(),
         data: {
             ...data,
             session_id: CAPTURE_SESSION_ID,
+            capture_mode: settings.condition,
+            path_privacy: settings.hashFilePaths ? "sha256" : "plain",
         },
     };
 
@@ -276,6 +393,7 @@ async function sendCaptureEvent(
     try {
         await codeChatEditorServer.sendCaptureEvent(JSON.stringify(payload));
         captureFailureLogged = false;
+        void refreshCaptureStatus();
     } catch (err) {
         reportCaptureFailure(err instanceof Error ? err.message : String(err));
     }
@@ -291,11 +409,146 @@ function reportCaptureFailure(message: string) {
     capture_output_channel?.appendLine(
         `${new Date().toISOString()} capture send failed: ${message}`,
     );
+    updateCaptureStatusBar("Capture: Error", message);
     if (captureFailureLogged) {
         return;
     }
     captureFailureLogged = true;
     console.warn(`CodeChat capture event was not queued: ${message}`);
+}
+
+function updateCaptureStatusBar(text: string, tooltip?: string) {
+    if (capture_status_bar_item === undefined) {
+        return;
+    }
+    capture_status_bar_item.text = text;
+    capture_status_bar_item.tooltip = tooltip;
+    capture_status_bar_item.show();
+}
+
+async function refreshCaptureStatus(): Promise<void> {
+    const settings = loadStudySettings();
+    const disabledReason = captureDisabledReason(settings);
+    if (disabledReason !== undefined) {
+        updateCaptureStatusBar(`Capture: ${disabledReason}`, disabledReason);
+        return;
+    }
+    if (codeChatEditorServer === undefined) {
+        updateCaptureStatusBar(
+            "Capture: Waiting",
+            "CodeChat server is not running",
+        );
+        return;
+    }
+
+    try {
+        const status = JSON.parse(
+            codeChatEditorServer.getCaptureStatus(),
+        ) as CaptureStatus;
+        const label =
+            status.state === "database"
+                ? "Capture: DB"
+                : status.state === "fallback"
+                  ? "Capture: Fallback"
+                  : status.state === "starting"
+                    ? "Capture: Starting"
+                    : "Capture: Off";
+        updateCaptureStatusBar(
+            label,
+            [
+                `state=${status.state}`,
+                `queued=${status.queued_events}`,
+                `db=${status.persisted_events}`,
+                `fallback=${status.fallback_events}`,
+                `failed=${status.failed_events}`,
+                status.last_error ? `last_error=${status.last_error}` : "",
+                status.fallback_path
+                    ? `fallback_path=${status.fallback_path}`
+                    : "",
+            ]
+                .filter((line) => line.length > 0)
+                .join("\n"),
+        );
+    } catch (err) {
+        updateCaptureStatusBar(
+            "Capture: Error",
+            err instanceof Error ? err.message : String(err),
+        );
+    }
+}
+
+async function showCaptureStatus(): Promise<void> {
+    await refreshCaptureStatus();
+    const tooltip = capture_status_bar_item?.tooltip;
+    vscode.window.showInformationMessage(
+        typeof tooltip === "string"
+            ? tooltip
+            : (tooltip?.value ?? "Capture status unavailable"),
+    );
+}
+
+async function recordStudyLifecycleEvent(eventType: string): Promise<void> {
+    const active = vscode.window.activeTextEditor;
+    await sendCaptureEvent(eventType, active?.document.fileName, {
+        command: eventType,
+        languageId: active?.document.languageId,
+    });
+}
+
+function reflectionPromptText(languageId: string, prompt: string): string {
+    if (languageId === "markdown") {
+        return `\n\n### Reflection\n\n${prompt}\n\n`;
+    }
+    if (languageId === "restructuredtext") {
+        return `\n.. ${prompt}\n`;
+    }
+    if (languageId === "plaintext" || languageId === "latex") {
+        return `\n${prompt}\n`;
+    }
+    const commentPrefix =
+        languageId === "python" ||
+        languageId === "shellscript" ||
+        languageId === "powershell" ||
+        languageId === "ruby"
+            ? "#"
+            : "//";
+    return `\n${commentPrefix} Reflection: ${prompt}\n`;
+}
+
+async function insertReflectionPrompt(): Promise<void> {
+    const settings = loadStudySettings();
+    if (settings.condition !== "treatment") {
+        vscode.window.showInformationMessage(
+            "Reflection prompts are disabled for this capture mode.",
+        );
+        return;
+    }
+    const editor = vscode.window.activeTextEditor;
+    if (editor === undefined) {
+        vscode.window.showInformationMessage("Open a text editor first.");
+        return;
+    }
+    const prompt = await vscode.window.showQuickPick(settings.promptTemplates, {
+        placeHolder: "Select a reflection prompt",
+    });
+    if (prompt === undefined) {
+        return;
+    }
+
+    await editor.insertSnippet(
+        new vscode.SnippetString(
+            reflectionPromptText(editor.document.languageId, prompt),
+        ),
+    );
+    await sendCaptureEvent(
+        "reflection_prompt_inserted",
+        editor.document.fileName,
+        {
+            prompt_hash: hashText(prompt),
+            prompt_length: prompt.length,
+            languageId: editor.document.languageId,
+        },
+    );
 }
 
 async function startExtensionCaptureSession(filePath?: string) {
@@ -361,8 +614,65 @@ export const activate = (context: vscode.ExtensionContext) => {
     capture_output_channel =
         vscode.window.createOutputChannel("CodeChat Capture");
     context.subscriptions.push(capture_output_channel);
+    capture_status_bar_item = vscode.window.createStatusBarItem(
+        vscode.StatusBarAlignment.Left,
+        100,
+    );
+    capture_status_bar_item.command = "extension.codeChatCaptureStatus";
+    context.subscriptions.push(capture_status_bar_item);
+    capture_status_timer = setInterval(() => {
+        void refreshCaptureStatus();
+    }, 5000);
+    context.subscriptions.push({
+        dispose: () => {
+            if (capture_status_timer !== undefined) {
+                clearInterval(capture_status_timer);
+                capture_status_timer = undefined;
+            }
+        },
+    });
+    context.subscriptions.push(
+        vscode.workspace.onDidChangeConfiguration((event) => {
+            if (event.affectsConfiguration("CodeChatEditor.Capture")) {
+                void refreshCaptureStatus();
+            }
+        }),
+    );
+    void refreshCaptureStatus();
 
     context.subscriptions.push(
+        vscode.commands.registerCommand(
+            "extension.codeChatCaptureStatus",
+            showCaptureStatus,
+        ),
+        vscode.commands.registerCommand(
+            "extension.codeChatInsertReflectionPrompt",
+            insertReflectionPrompt,
+        ),
+        vscode.commands.registerCommand(
+            "extension.codeChatCaptureTaskStart",
+            () => recordStudyLifecycleEvent("task_start"),
+        ),
+        vscode.commands.registerCommand(
+            "extension.codeChatCaptureTaskSubmit",
+            () => recordStudyLifecycleEvent("task_submit"),
+        ),
+        vscode.commands.registerCommand(
+            "extension.codeChatCaptureDebugTaskStart",
+            () => recordStudyLifecycleEvent("debug_task_start"),
+        ),
+        vscode.commands.registerCommand(
+            "extension.codeChatCaptureDebugTaskSubmit",
+            () => recordStudyLifecycleEvent("debug_task_submit"),
+        ),
+        vscode.commands.registerCommand(
+            "extension.codeChatCaptureHandoffStart",
+            () => recordStudyLifecycleEvent("handoff_start"),
+        ),
+        vscode.commands.registerCommand(
+            "extension.codeChatCaptureHandoffEnd",
+            () => recordStudyLifecycleEvent("handoff_end"),
+        ),
         vscode.commands.registerCommand(
             "extension.codeChatEditorDeactivate",
             deactivate,
@@ -609,6 +919,7 @@ export const activate = (context: vscode.ExtensionContext) => {
                 captureFailureLogged = false;
                 captureTransportReady = false;
                 extensionCaptureSessionStarted = false;
+                void refreshCaptureStatus();
 
                 const hosted_in_ide =
                     codechat_client_location ===
@@ -1045,6 +1356,7 @@ const stop_client = async () => {
         codeChatEditorServer = undefined;
     }
     captureTransportReady = false;
+    void refreshCaptureStatus();
 
     if (idle_timer !== undefined) {
         clearTimeout(idle_timer);
