@@ -464,16 +464,16 @@ fn run_format_and_lint(check_only: bool) -> io::Result<()> {
     };
     run_cmd!(
         info "cargo clippy and fmt";
-        cargo clippy --all-targets --all-features --tests -- $clippy_check_only;
+        cargo clippy --all-targets --all-features -- $clippy_check_only;
         cargo fmt --all $check;
         info "Builder: cargo clippy and fmt";
-        cargo clippy --all-targets --all-features --tests --manifest-path=$BUILDER_PATH/Cargo.toml -- $clippy_check_only;
+        cargo clippy --all-targets --all-features --manifest-path=$BUILDER_PATH/Cargo.toml -- $clippy_check_only;
         cargo fmt --all $check --manifest-path=$BUILDER_PATH/Cargo.toml;
         info "VSCode extension: cargo clippy and fmt";
-        cargo clippy --all-targets --all-features --tests --manifest-path=$VSCODE_PATH/Cargo.toml -- $clippy_check_only;
+        cargo clippy --all-targets --all-features --manifest-path=$VSCODE_PATH/Cargo.toml -- $clippy_check_only;
         cargo fmt --all $check --manifest-path=$VSCODE_PATH/Cargo.toml;
         info "test_utils: cargo clippy and fmt"
-        cargo clippy --all-targets --all-features --tests --manifest-path=$TEST_UTILS_PATH/Cargo.toml -- $clippy_check_only;
+        cargo clippy --all-targets --all-features --manifest-path=$TEST_UTILS_PATH/Cargo.toml -- $clippy_check_only;
         cargo fmt --all $check --manifest-path=$TEST_UTILS_PATH/Cargo.toml;
 
         info "cargo audit";
