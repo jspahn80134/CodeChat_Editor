@@ -233,7 +233,7 @@ export const activate = (context: vscode.ExtensionContext) => {
                                 // before this command was executed to retain
                                 // the focus and be immediately rendered.
                                 preserveFocus: true,
-                                // Put this in the a column beside the current
+                                // Put this in the column beside the current
                                 // column.
                                 viewColumn: vscode.ViewColumn.Beside,
                             },
