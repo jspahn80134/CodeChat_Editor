@@ -344,7 +344,28 @@ async fn test_6_core(
     // Perform edits.
     body_content.send_keys("a").await.unwrap();
     let mut client_id = INITIAL_CLIENT_MESSAGE_ID;
-    let msg = codechat_server.get_message_timeout(TIMEOUT).await.unwrap();
+    let mut msg = codechat_server.get_message_timeout(TIMEOUT).await.unwrap();
+    // Sometimes, a cursor update gets sent before the edit.
+    if let EditorMessageContents::Update(update) = &msg.message
+        && update.contents.is_none()
+    {
+        assert_eq!(
+            msg,
+            EditorMessage {
+                id: client_id,
+                message: EditorMessageContents::Update(UpdateMessageContents {
+                    file_path: path_str.clone(),
+                    cursor_position: Some(CursorPosition::Line(1)),
+                    scroll_position: None,
+                    is_re_translation: false,
+                    contents: None
+                })
+            }
+        );
+        codechat_server.send_result(client_id, None).await.unwrap();
+        client_id += MESSAGE_ID_INCREMENT;
+        msg = codechat_server.get_message_timeout(TIMEOUT).await.unwrap();
+    }
     let client_version = get_version(&msg);
     assert_eq!(
         msg,
