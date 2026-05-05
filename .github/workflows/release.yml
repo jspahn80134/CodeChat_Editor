@@ -182,17 +182,11 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       BUILD_MANIFEST_NAME: target/distrib/global-dist-manifest.json
-      VSCE_PAT: ${{ secrets.VSCE_PAT }}
-      APP_VERSION: ${{ fromJson(needs.plan.outputs.val).releases[0].app_version }}
-      VSCE_ARGS: --changelog-path docs/changelog.md
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
           submodules: recursive
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
       - name: Install cached dist
         uses: actions/download-artifact@v7
         with:
@@ -209,11 +203,6 @@ jobs:
       - id: cargo-dist
         shell: bash
         run: |
-          npm install -g @vscode/vsce
-          npx vsce publish --packagePath target/distrib/extensions/VSCode/codechat-editor-client-win32-x64-${APP_VERSION}.vsix $VSCE_ARGS
-          npx vsce publish --packagePath target/distrib/extensions/VSCode/codechat-editor-client-linux-x64-${APP_VERSION}.vsix $VSCE_ARGS
-          npx vsce publish --packagePath target/distrib/extensions/VSCode/codechat-editor-client-darwin-x64-${APP_VERSION}.vsix $VSCE_ARGS
-          npx vsce publish --packagePath target/distrib/extensions/VSCode/codechat-editor-client-darwin-arm64-${APP_VERSION}.vsix $VSCE_ARGS
           dist build ${{ needs.plan.outputs.tag-flag }} --output-format=json "--artifacts=global" > dist-manifest.json
           echo "dist ran successfully"
 
@@ -248,6 +237,9 @@ jobs:
         with:
           persist-credentials: false
           submodules: recursive
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
       - name: Install cached dist
         uses: actions/download-artifact@v7
         with:
@@ -291,7 +283,17 @@ jobs:
           ANNOUNCEMENT_TITLE: "${{ fromJson(steps.host.outputs.manifest).announcement_title }}"
           ANNOUNCEMENT_BODY: "${{ fromJson(steps.host.outputs.manifest).announcement_github_body }}"
           RELEASE_COMMIT: "${{ github.sha }}"
+          APP_VERSION: ${{ fromJson(needs.plan.outputs.val).releases[0].app_version }}
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+          VSCE_PRERELEASE_FLAG: "${{ fromJson(steps.host.outputs.manifest).announcement_is_prerelease && '--pre-release' || '' }}"
+          VSCE_ARGS: --changelog-path docs/changelog.md $VSCE_PRERELEASE_FLAG
         run: |
+          npm install -g @vscode/vsce
+          npx vsce publish --packagePath target/distrib/extensions/VSCode/codechat-editor-client-win32-x64-${APP_VERSION}.vsix $VSCE_ARGS
+          npx vsce publish --packagePath target/distrib/extensions/VSCode/codechat-editor-client-linux-x64-${APP_VERSION}.vsix $VSCE_ARGS
+          npx vsce publish --packagePath target/distrib/extensions/VSCode/codechat-editor-client-darwin-x64-${APP_VERSION}.vsix $VSCE_ARGS
+          npx vsce publish --packagePath target/distrib/extensions/VSCode/codechat-editor-client-darwin-arm64-${APP_VERSION}.vsix $VSCE_ARGS
+
           # Write and read notes from a file to avoid quoting breaking things
           echo "$ANNOUNCEMENT_BODY" > $RUNNER_TEMP/notes.txt
 
