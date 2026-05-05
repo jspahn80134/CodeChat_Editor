@@ -22,7 +22,11 @@ Changelog
 [Github master](https://github.com/bjones1/CodeChat_Editor)
 -----------------------------------------------------------
 
-* No changes.
+* Correct Markdown conversion of the last doc block -- properly append all
+  post-conversion text to it.
+* Improve browser automated testing framework.
+* Add the ability for the IDE cursor to follow the line when the Client cursor
+  is in a doc block.
 
 Version 0.1.54 -- 2026-Apr-16
 -----------------------------
