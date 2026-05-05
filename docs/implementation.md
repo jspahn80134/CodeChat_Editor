@@ -358,6 +358,41 @@ removed them. This means that some HTML tags won't be properly closed, since the
 closing tags are removed from the HTML. This is fixed by later HTML processing
 steps (currently, by TinyMCE), which properly closes tags.
 
+### Cursor tracking
+
+Ideally, both the scroll location and the cursor position/current selection
+would be synced between the IDE and the Client. However, it's difficult to
+maintain the selection through a number of transformations which occur between
+the IDE and Client.
+
+#### Client to IDE selection sync
+
+One approach to maintaining the selection through these transformations is to
+insert a marker character in the Client, transform this to the IDE, then recover
+the line number of the marker, removing it after the transformations. However,
+this requires sending updated text each time the cursor moves; for a Markdown
+document, this means sending the entire document. Therefore, this approach is
+impractical.
+
+A second approach is to store the selection as offsets with the HTML DOM in the
+Client; the server then re-parses the DOM, inserts a marker, performs
+transformations, then recovers the line number and removes the marker. This is
+the approach taken.
+
+However, this leads to several challenges: whitespace differences in HTML are
+often not rendered, but produce different DOMs. TinyMCE minifies incoming HTML,
+adds additional nodes and attributes for editing, then removes these and
+de-minifies when retrieving the HTML from the editor. Again, this produces
+dissimilar DOMs.
+
+To overcome this, the Server uses a minifier that produces similar results to
+TinyMCE's minifier, so that the HTML DOM before edits will be very similar. 
+HTML from TinyMCE is taken in raw form, preserving the DOM; the Server then
+removes TinyMCE attributes and tags as an initial transformation step. The few
+differences not corrected by this process are fixed via (kludgy) string
+replacements when comparing HTML between a re-translation from the Server and
+the Client's updated text.
+
 Future work
 -----------
 
