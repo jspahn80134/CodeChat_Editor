@@ -1342,8 +1342,6 @@ fn compare_html(
         let normalized_html = normalized_html
             // pulldown-cmark puts a newline after a `<br>`, which `minify` doesn't remove but TinyMCE does.
             .replace("<br> ", "<br>")
-            // The html5ever encoder replaces the non-breaking space character with an entity, while the Markdown conversion process doesn't. Replace this to make comparison work.
-            .replace("\u{a0}", "&nbsp;")
             // Fix differences between TinyMCE and the forward process. There are probably other cases out there...
             .replace(
                 "<input type=\"checkbox\" checked=\"\">",
@@ -1400,22 +1398,22 @@ fn debug_shorten<T: Debug>(val: T) -> String {
 mod tests {
     use crate::{processing::CodeMirrorDocBlock, translation::doc_blocks_compare};
 
-    //#[test]
+    #[test]
     fn test_x1() {
-        let before = vec![CodeMirrorDocBlock {
+        let ide = vec![CodeMirrorDocBlock {
             from: 0,
             to: 20,
             indent: "".to_string(),
             delimiter: "//".to_string(),
-            contents: "<p>Copyright (C) 2025 Bryan A. Jones.</p>\n<p>This file is part of the CodeChat Editor. The CodeChat Editor is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.</p>\n<p>The CodeChat Editor is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.</p>\n<p>You should have received a copy of the GNU General Public License along with the CodeChat Editor. If not, see <a href=\"http://www.gnu.org/licenses\">http://www.gnu.org/licenses</a>.</p>\n<h1><code>debug_enable.mts</code> -- Configure debug features</h1>\n<p>True to enable additional debug logging.</p>".to_string(),
+            contents: "<ul><li><input type=\"checkbox\" checked>Task list</li></ul><p>Line<br> break</p><p>Non-breaking\u{a0} space.</p><iframe frameborder=\"0\" height=\"314\" src=\"https://www.youtube.com/embed/Hp076_dxuVU\" width=\"560\" allowfullscreen></iframe>".to_string(),
         }];
-        let after = vec![CodeMirrorDocBlock {
+        let client = vec![CodeMirrorDocBlock {
             from: 0,
             to: 20,
             indent: "".to_string(),
             delimiter: "//".to_string(),
-            contents: "<p>Copyright (C) 2025 Bryan A. Jones.</p>\n<p>This file is part of the CodeChat Editor. The CodeChat Editor is free\nsoftware: you can redistribute it and/or modify it under the terms of the GNU\nGeneral Public License as published by the Free Software Foundation, either\nversion 3 of the License, or (at your option) any later version.</p>\n<p>The CodeChat Editor is distributed in the hope that it will be useful, but\nWITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or\nFITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more\ndetails.</p>\n<p>You should have received a copy of the GNU General Public License along with\nthe CodeChat Editor. If not, see\n<a href=\"http://www.gnu.org/licenses\">http://www.gnu.org/licenses</a>.</p>\n<h1><code>debug_enable.mts</code> -- Configure debug features</h1>\n<p>True to enable additional debug logging.</p>\n".to_string(),
+            contents: "<ul><li><input type=\"checkbox\" checked=\"checked\">Task list</li></ul><p>Line<br>break</p><p>Non-breaking&nbsp; space.</p><p><span contenteditable=\"false\" data-mce-object=\"iframe\" class=\"mce-preview-object mce-object-iframe\" data-mce-p-allowfullscreen=\"allowfullscreen\" data-mce-p-src=\"https://www.youtube.com/embed/Hp076_dxuVU\" data-mce-p-frameborder=\"0\"><iframe width=\"560\" height=\"314\" src=\"https://www.youtube.com/embed/Hp076_dxuVU\" allowfullscreen=\"allowfullscreen\" frameborder=\"0\"></iframe><span class=\"mce-shim\"></span></span></p>".to_string(),
         }];
-        assert!(doc_blocks_compare(&before, &after));
+        assert!(doc_blocks_compare(&ide, &client));
     }
 }

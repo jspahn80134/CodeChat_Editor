@@ -514,7 +514,7 @@ fn test_source_to_codechat_for_web_1() {
         ),
         Ok(TranslationResults::CodeChat(build_codechat_for_web(
             MARKDOWN_MODE,
-            &format!("<p>{lexer_spec}markdown</p>\n"),
+            &format!("<p>{lexer_spec}markdown</p>"),
             vec![]
         )))
     );

@@ -168,7 +168,7 @@ async fn test_5_core(
         "
     )
     .to_string();
-    let mut server_id = perform_loadfile(
+    let _server_id = perform_loadfile(
         &codechat_server,
         &test_dir,
         "test.py",
@@ -247,17 +247,6 @@ async fn test_5_core(
     // ID: 10.
     client_id += MESSAGE_ID_INCREMENT;
 
-    // The Server sends the Client a wrapped version of the text; the Client
-    // replies with a Result(Ok).
-    assert_eq!(
-        codechat_server.get_message_timeout(TIMEOUT).await.unwrap(),
-        EditorMessage {
-            id: server_id,
-            message: EditorMessageContents::Result(Ok(ResultOkTypes::Void))
-        }
-    );
-    server_id += MESSAGE_ID_INCREMENT;
-
     // Send new text, which turns into a diff.
     let ide_id = codechat_server
         .send_message_update_plain(path_str.clone(), Some((orig_text, version)), Some(1), None)
@@ -308,33 +297,6 @@ async fn test_5_core(
     );
     //let version = client_version;
     codechat_server.send_result(client_id, None).await.unwrap();
-    client_id += MESSAGE_ID_INCREMENT;
-
-    // The Server sends the Client a wrapped version of the text; the Client
-    // replies with a Result(Ok).
-    assert_eq!(
-        codechat_server.get_message_timeout(TIMEOUT).await.unwrap(),
-        EditorMessage {
-            id: server_id,
-            message: EditorMessageContents::Result(Ok(ResultOkTypes::Void))
-        }
-    );
-    //server_id += MESSAGE_ID_INCREMENT;
-
-    // The Client sends an updated cursor located after the edit.
-    assert_eq!(
-        codechat_server.get_message_timeout(TIMEOUT).await.unwrap(),
-        EditorMessage {
-            id: client_id,
-            message: EditorMessageContents::Update(UpdateMessageContents {
-                file_path: path_str.clone(),
-                cursor_position: Some(CursorPosition::Line(1)),
-                scroll_position: Some(1.0),
-                is_re_translation: false,
-                contents: None,
-            })
-        }
-    );
     //client_id += MESSAGE_ID_INCREMENT;
 
     assert_no_more_messages(&codechat_server).await;
@@ -380,7 +342,7 @@ async fn test_6_core(
 
     // Perform edits.
     body_content.send_keys("a").await.unwrap();
-    let mut client_id = INITIAL_CLIENT_MESSAGE_ID;
+    let client_id = INITIAL_CLIENT_MESSAGE_ID;
     let msg = codechat_server.get_message_timeout(TIMEOUT).await.unwrap();
     let client_version = get_version(&msg);
     assert_eq!(
@@ -411,23 +373,6 @@ async fn test_6_core(
         }
     );
     let version = client_version;
-    codechat_server.send_result(client_id, None).await.unwrap();
-    client_id += MESSAGE_ID_INCREMENT;
-
-    // Wait for a second update that's empty. Not sure why.
-    assert_eq!(
-        codechat_server.get_message_timeout(TIMEOUT).await.unwrap(),
-        EditorMessage {
-            id: client_id,
-            message: EditorMessageContents::Update(UpdateMessageContents {
-                file_path: path_str.clone(),
-                cursor_position: None,
-                scroll_position: None,
-                is_re_translation: false,
-                contents: None,
-            })
-        }
-    );
     codechat_server.send_result(client_id, None).await.unwrap();
     //client_id += MESSAGE_ID_INCREMENT;
 

@@ -868,6 +868,7 @@ pub fn source_to_codechat_for_web(
             let dry_html = markdown_to_html(file_contents);
             let html = hydrate_html(&dry_html)
                 .map_err(|e| SourceToCodeChatForWebError::ParseFailed(e.to_string()))?;
+            let html = minify(&html)?;
             CodeMirrorDiffable::Plain(CodeMirror {
                 doc: html,
                 doc_blocks: vec![],
