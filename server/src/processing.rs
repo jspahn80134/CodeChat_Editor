@@ -607,12 +607,14 @@ pub fn doc_block_html_to_markdown(
     // the offset within the last node (which must be a text node), at which a
     // marker character will be inserted.
     //
-    // This will be applied to each doc block -- when this parameter is
-    // provided, it's typically called with a vec containing only one doc block.
+    // For this reason, when provided, this function must called with a vec
+    // containing only one doc block.
     dom_location: &Option<(Vec<usize>, usize)>,
 ) -> Result<Vec<CodeDocBlock>, HtmlToMarkdownWrappedError> {
     let mut converter = HtmlToMarkdownWrapped::new();
     let mut last_doc_block_index = None;
+    // Only perform marker insertions to a length 1 vec.
+    assert!(dom_location.is_none() || code_doc_block_vec.len() == 1);
     for (index, code_doc_block) in &mut code_doc_block_vec.iter_mut().enumerate() {
         if let CodeDocBlock::DocBlock(doc_block) = code_doc_block {
             last_doc_block_index = Some(index);
@@ -1115,8 +1117,8 @@ fn html_to_tree(
             };
             current_node = next_node;
         }
-        // Insert the cursor marker at the given character offset within
-        // the text node.
+        // Insert the cursor marker at the given character offset within the
+        // text node.
         if let NodeData::Text { contents } = &current_node.data {
             let mut text = contents.borrow().to_string();
             // Convert the character offset into a byte offset.
@@ -1327,7 +1329,8 @@ pub fn remove_tinymce_data(
                 .iter()
                 .any(|attr| attr.name.local == *"class" && attr.value.starts_with("mce"))
         {
-            // Replace this element with its children. First, update the children with the new parent.
+            // Replace this element with its children. First, update the
+            // children with the new parent.
             let new_parent = node
                 .parent
                 .take()
@@ -1337,17 +1340,21 @@ pub fn remove_tinymce_data(
             }
 
             // Insert the children in place of the node.
-            let children: Vec<_> = node.children.borrow_mut().to_vec();
+            let children: Vec<_> = node.children.borrow().to_vec();
             let no_children = children.is_empty();
             parent.children.borrow_mut().splice(index..=index, children);
-            // Process the first child which replaced the current node, since it hasn't been processed yet, then return it as the updated node.
+            // Process the first child which replaced the current node, since it
+            // hasn't been processed yet, then return it as the updated node.
             return if no_children {
                 None
             } else {
+                // Important: all previous borrows of `parent` must be dropped,
+                // since this will re-borrow it.
                 remove_tinymce_data(parent, index)
             };
         } else {
-            // If we didn't remove this element, then filter out unwanted attributes.
+            // If we didn't remove this element, then filter out unwanted
+            // attributes.
             attrs.borrow_mut().retain(|attr| {
                 !(attr.name.local.starts_with("data-mce-")
                     || (attr.name.local == *"class" && attr.value.starts_with("mce-")))
@@ -1357,13 +1364,17 @@ pub fn remove_tinymce_data(
     Some(node.clone())
 }
 
-/// Walk a node, dehydrating it by removing TineMCE temporary attributes, changing math to pulldown-cmark's output, and changing graphviz/Mermaid to fenced code blocks.
+/// Walk a node, dehydrating it by removing TineMCE temporary attributes,
+/// changing math to pulldown-cmark's output, and changing graphviz/Mermaid to
+/// fenced code blocks.
 fn dehydrating_walk_node(node: &Rc<Node>) {
     let mut index = 0;
-    // Avoid a `while` loop, since accessing `node.children` requires a borrow held for the body of the loop.
+    // Avoid a `while` loop, since accessing `node.children` requires a borrow
+    // held for the body of the loop.
     while index < node.children.borrow().len() {
         // Remove TinyMCE data from the child at `index`; if the child was
-        // spliced away (no replacement), the slot is gone re-process this index.
+        // spliced away (no replacement), the slot is gone; leave \`index\`\`
+        // unchanged to process what is now at this position.
         if remove_tinymce_data(node, index).is_none() {
             continue;
         }

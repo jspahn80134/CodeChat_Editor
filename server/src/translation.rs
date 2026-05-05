@@ -1201,7 +1201,9 @@ impl TranslationTask {
                         // list; CodeChat documents have non-empty doc blocks.
                         // We can't rely on the lexer name in
                         // `CodeChatForWeb::SourceFileMetaData`, since the
-                        // message `contents` may be None.
+                        // message `contents` may be None. This won't confuse a
+                        // CodeChat document with no doc blocks, since the
+                        // Client won't send a `DomLocation` in this case.
                         let is_markdown = self
                             .code_mirror_doc_blocks
                             .as_ref()
@@ -1209,8 +1211,8 @@ impl TranslationTask {
 
                         // 1. Find the HTML (for a Markdown document) or the doc
                         //    block the cursor is in. Create a temporary
-                        //    one-element `Vec<CodeDocBlock>` from this.
-                        //    containing only the doc block identified above.
+                        //    one-element `Vec<CodeDocBlock>` from this
+                        //    containing only the relevant doc block.
                         let (preceding_newlines, doc_block) = if is_markdown {
                             // 1. For Markdown, there are zero preceding
                             //    newlines and the relevant HTML is in
@@ -1320,7 +1322,7 @@ fn compare_html_walker(node: &Rc<Node>) {
             compare_html_walker(&child);
             index += 1;
         }
-        // If remove_tinymce_data returned None, the node was removed with no
+        // If remove\_tinymce\_data returned None, the node was removed with no
         // replacement; the next child is now at the same index.
     }
 }
@@ -1335,19 +1337,26 @@ fn compare_html(
     // processing by TinyMCE.
     raw_html: &str,
 ) -> bool {
-    // Remove TinyMCE temp data before comparison; this also normalizes the characters via html5ever. Order here in very important: the `source_to_codechat_for_web()` function transforms, then minifies, since both transform and minify tend to rearrange attributes in their own preferred order. Use the same order to make comparisons work.
+    // Remove TinyMCE temp data before comparison; this also normalizes the
+    // characters via html5ever. Order here in very important: the
+    // `source_to_codechat_for_web()` function transforms, then minifies, since
+    // both transform and minify tend to rearrange attributes in their own
+    // preferred order. Use the same order to make comparisons work.
     if let Ok(raw_html) = transform_html(raw_html, compare_html_walker)
         && let Ok(raw_html) = minify(&raw_html)
     {
         let normalized_html = normalized_html
-            // pulldown-cmark puts a newline after a `<br>`, which `minify` doesn't remove but TinyMCE does.
+            // pulldown-cmark puts a newline after a `<br>`, which `minify`
+            // doesn't remove but TinyMCE does.
             .replace("<br> ", "<br>")
-            // Fix differences between TinyMCE and the forward process. There are probably other cases out there...
+            // Fix differences between TinyMCE and the forward process. There
+            // are probably other cases out there...
             .replace(
                 "<input type=\"checkbox\" checked=\"\">",
                 "<input type=\"checkbox\" checked=\"checked\">",
             )
-            // TinyMCE wraps an `<iframe>` in a paragraph. The forward process doesn't.
+            // TinyMCE wraps an `<iframe>` in a paragraph. The forward process
+            // doesn't.
             .replace("<iframe", "<p><iframe")
             .replace("</iframe>", "</iframe></p>");
         normalized_html == raw_html

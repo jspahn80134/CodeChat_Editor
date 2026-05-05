@@ -144,10 +144,6 @@ pub const TIMEOUT: Duration = Duration::from_millis(2000);
 // A test harness. It runs the webdriver, the Server, opens the Client, then
 // runs provided tests. After testing finishes, it cleans up (handling panics
 // properly).
-//
-// The goal was to pass the harness a function which runs the tests. This
-// currently doesn't work, due to problems with lifetimes (see comments). So,
-// implement this as a macro instead (kludge!).
 pub async fn harness<
     F: FnOnce(CodeChatEditorServer, WebDriver, PathBuf) -> Fut,
     Fut: Future<Output = Result<(), WebDriverError>>,
@@ -199,7 +195,7 @@ pub async fn harness<
 
         // Get the resulting web page text.
         let opened_id = codechat_server.send_message_opened(true).await.unwrap();
-        pretty_assertions::assert_eq!(
+        assert_eq!(
             codechat_server.get_message_timeout(TIMEOUT).await.unwrap(),
             EditorMessage {
                 id: opened_id,

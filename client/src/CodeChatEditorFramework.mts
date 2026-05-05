@@ -263,7 +263,7 @@ class WebSocketComm {
                         // If the page is still loading, then don't save.
                         // Otherwise, save the editor contents if necessary.
                         const cce = get_client();
-                        await cce?.on_save(true);
+                        await cce?.send_update(true);
                         // Now, it's safe to load a new file. Tell the client to
                         // allow this navigation -- the document it contains has
                         // already been saved.

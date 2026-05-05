@@ -94,7 +94,7 @@ import { Editor, EditorEvent, Events } from "tinymce";
 // ### Local
 import {
     set_is_dirty,
-    startAutosaveTimer,
+    startAutoUpdateTimer,
     saveSelection,
     restoreSelection,
 } from "./CodeChatEditor.mjs";
@@ -658,6 +658,7 @@ const on_dirty = (
         // I'd like to extract this string, then untypeset only that string, not
         // the actual div. But I don't know how.
         mathJaxUnTypeset(contents_div);
+        // Use the raw format; see the implementation notes.
         const contents = is_tinymce
             ? tinymce.activeEditor!.save({ format: "raw" })
             : contents_div.innerHTML;
@@ -781,7 +782,7 @@ export const DocBlockPlugin = ViewPlugin.fromClass(
                 const [contents_div, is_tinymce] = get_contents(target);
 
                 // Send updated cursor/scroll info.
-                startAutosaveTimer();
+                startAutoUpdateTimer();
 
                 // See if this is already a TinyMCE instance; if not, move it
                 // here.
@@ -907,10 +908,10 @@ const autosaveExtension = EditorView.updateListener.of(
         }
         if (isChanged) {
             set_is_dirty();
-            startAutosaveTimer();
+            startAutoUpdateTimer();
         } else if (v.selectionSet) {
             // Send an update if only the selection changed.
-            startAutosaveTimer();
+            startAutoUpdateTimer();
         }
     },
 );
@@ -1100,7 +1101,7 @@ export const CodeMirror_load = async (
                             Events.EditorEventMap["SelectionChange"]
                         >,
                     ) => {
-                        startAutosaveTimer();
+                        startAutoUpdateTimer();
                     },
                 );
             },
@@ -1235,31 +1236,34 @@ export const set_CodeMirror_positions = (
     // If a doc block has focus, then the CodeMirror selection reports line 1.
     // Use the starting line number of the doc block instead.
     const doc_block = document.activeElement?.closest(".CodeChat-doc");
-    let cp;
+    let cursor_position;
     if (doc_block) {
         const from = current_view.posAtDOM(doc_block);
         const location = saveSelection();
-        // If there's a selection in the doc block, pass the DOM location; otherwise, pass the line where the doc block starts.
+        // If there's a selection in the doc block, pass the DOM location;
+        // otherwise, pass the line where the doc block starts.
         if (location.selection_offset === undefined) {
-            cp = { Line: current_view.state.doc.lineAt(from).number };
+            cursor_position = {
+                Line: current_view.state.doc.lineAt(from).number,
+            };
         } else {
-            cp = {
+            cursor_position = {
                 DomLocation: {
                     dom_path: location.selection_path,
                     dom_offset: location.selection_offset,
-                    from: current_view.posAtDOM(doc_block),
+                    from,
                 },
             };
         }
     } else {
         // For a code block, we can simply retrieve the line number.
-        cp = {
+        cursor_position = {
             Line: current_view.state.doc.lineAt(
                 current_view.state.selection.main.from,
             ).number,
         };
     }
-    update_message_contents.cursor_position = cp;
+    update_message_contents.cursor_position = cursor_position;
 
     // `current_view.viewport.from` isn't accurate, since it's not really the
     // top line, but a margin before it; see the

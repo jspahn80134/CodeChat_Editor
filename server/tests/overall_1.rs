@@ -314,6 +314,22 @@ async fn test_server_core(
     let code_line = driver.find(By::Css(code_line_css)).await.unwrap();
     assert_eq!(code_line.inner_html().await.unwrap(), "code()bark");
 
+    assert_eq!(
+        codechat_server.get_message_timeout(TIMEOUT).await.unwrap(),
+        EditorMessage {
+            id: client_id,
+            message: EditorMessageContents::Update(UpdateMessageContents {
+                file_path: path_str.clone(),
+                cursor_position: Some(CursorPosition::Line(1)),
+                scroll_position: Some(1.0),
+                is_re_translation: false,
+                contents: None
+            })
+        }
+    );
+    codechat_server.send_result(client_id, None).await.unwrap();
+    client_id += MESSAGE_ID_INCREMENT;
+
     /*x TODO: these tests fail, since the Client sends an unnecessary OutOfSync message. How to test sending a diff to the client?
        // Perform a second edit and verification, to produce a diff sent to the
        // Client.
@@ -334,14 +350,14 @@ async fn test_server_core(
                message: EditorMessageContents::Result(Ok(ResultOkTypes::Void))
            }
        );
-       let doc_block_indent = driver_ref.find(By::Css(indent_css)).await.unwrap();
+       let doc_block_indent = driver.find(By::Css(indent_css)).await.unwrap();
        assert_eq!(doc_block_indent.inner_html().await.unwrap(), " ");
-       let doc_block_contents = driver_ref.find(By::Css(contents_css)).await.unwrap();
+       let doc_block_contents = driver.find(By::Css(contents_css)).await.unwrap();
        assert_eq!(
            doc_block_contents.inner_html().await.unwrap(),
            "<p>food</p>"
        );
-       let code_line = driver_ref.find(By::Css(code_line_css)).await.unwrap();
+       let code_line = driver.find(By::Css(code_line_css)).await.unwrap();
        assert_eq!(code_line.inner_html().await.unwrap(), "bark");
     */
     // ### Document-only tests
@@ -376,7 +392,7 @@ async fn test_server_core(
             id: client_id,
             message: EditorMessageContents::Update(UpdateMessageContents {
                 file_path: md_path_str.clone(),
-                cursor_position: None,
+                cursor_position: Some(CursorPosition::Line(1)),
                 scroll_position: None,
                 is_re_translation: false,
                 contents: Some(CodeChatForWeb {
@@ -411,7 +427,7 @@ async fn test_server_core(
             id: client_id,
             message: EditorMessageContents::Update(UpdateMessageContents {
                 file_path: md_path_str.clone(),
-                cursor_position: None,
+                cursor_position: Some(CursorPosition::Line(1)),
                 scroll_position: None,
                 is_re_translation: false,
                 contents: None,
@@ -756,6 +772,7 @@ async fn test_client_updates_core(
             }
         );
         client_id += MESSAGE_ID_INCREMENT;
+        assert_eq!(client_id, 7.0);
         msg = codechat_server.get_message_timeout(TIMEOUT).await.unwrap();
     }
 
@@ -790,6 +807,7 @@ async fn test_client_updates_core(
     );
     codechat_server.send_result(client_id, None).await.unwrap();
     client_id += MESSAGE_ID_INCREMENT;
+    assert!(client_id == 10.0 || client_id == 7.0);
 
     // The Server sends the Client a wrapped version of the text; the Client
     // replies with a Result(Ok).
@@ -802,6 +820,7 @@ async fn test_client_updates_core(
     );
     server_id += MESSAGE_ID_INCREMENT;
 
+    // After this, ID is 13.
     goto_line(&codechat_server, &driver, &mut client_id, &path_str, 4)
         .await
         .unwrap();
@@ -842,7 +861,7 @@ async fn test_client_updates_core(
         }
     );
     codechat_server.send_result(client_id, None).await.unwrap();
-    //client_id += MESSAGE_ID_INCREMENT;
+    client_id += MESSAGE_ID_INCREMENT;
 
     // The Server sends the Client a re-translated version of the text with the
     // new doc block; the Client replies with a Result(Ok).
@@ -853,7 +872,23 @@ async fn test_client_updates_core(
             message: EditorMessageContents::Result(Ok(ResultOkTypes::Void))
         }
     );
-    //server_id += MESSAGE_ID_INCREMENT;
+
+    // The Client sends an cursor position update.
+    assert_eq!(
+        codechat_server.get_message_timeout(TIMEOUT).await.unwrap(),
+        EditorMessage {
+            id: client_id,
+            message: EditorMessageContents::Update(UpdateMessageContents {
+                file_path: path_str.clone(),
+                cursor_position: Some(CursorPosition::Line(4)),
+                scroll_position: Some(1.0),
+                is_re_translation: false,
+                contents: None,
+            })
+        }
+    );
+    codechat_server.send_result(client_id, None).await.unwrap();
+    //client_id += MESSAGE_ID_INCREMENT;
 
     /*x TODO broken by OutOfSync due to unnecessary save after re-translate.
         // Send the original text back, to ensure the re-translation correctly updated the Client.
@@ -875,7 +910,7 @@ async fn test_client_updates_core(
             }
         );
         // Trigger a client edit to send the Client contents back.
-        let code_line = driver_ref.find(By::Css(code_line_css)).await.unwrap();
+        let code_line = driver.find(By::Css(code_line_css)).await.unwrap();
         code_line.send_keys(" ").await.unwrap();
 
         let msg = codechat_server.get_message_timeout(TIMEOUT).await.unwrap();
@@ -886,7 +921,7 @@ async fn test_client_updates_core(
                 id: client_id,
                 message: EditorMessageContents::Update(UpdateMessageContents {
                     file_path: path_str.clone(),
-                    cursor_position: Some(2),
+                    cursor_position: Some(CursorPosition::Line(2)),
                     scroll_position: Some(1.0),
                     is_re_translation: false,
                     contents: Some(CodeChatForWeb {
@@ -908,9 +943,9 @@ async fn test_client_updates_core(
             }
         );
         codechat_server.send_result(client_id, None).await.unwrap();
-
-        assert_no_more_messages(&codechat_server).await;
     */
+
+    assert_no_more_messages(&codechat_server).await;
 
     Ok(())
 }

@@ -343,8 +343,8 @@ pub struct UpdateMessageContents {
     /// transition times when the IDE and Client have different files loaded,
     /// guaranteeing to updates are still applied to the correct file.
     pub file_path: String,
-    /// The line in the file where the cursor is located. TODO: Selections are
-    /// not yet supported.
+    /// The line in the file where the cursor is located or the DOM location of
+    /// the cursor. TODO: Selections are not yet supported.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor_position: Option<CursorPosition>,
     /// The line at the top of the screen.
@@ -372,15 +372,14 @@ pub enum CursorPosition {
     /// receive a message with this variant and must not generate a message with
     /// this variant.
     DomLocation {
-        // The `from` location (character offset) of the doc block the cursor is
-        // in.
+        /// The `from` location (character offset) of the doc block the cursor
+        /// is in.
         from: usize,
-        // The index of each successive node in the DOM of the current
-        // selection (cursor location).
+        /// The index of each successive node in the DOM of the current
+        /// selection (cursor location).
         dom_path: Vec<usize>,
-        // The offset
-        // within the last node (which must be a text node) of the current
-        // selection (cursor location).
+        /// The offset within the last node (which must be a text node) of the
+        /// current selection (cursor location).
         dom_offset: usize,
     },
 }

@@ -69,7 +69,7 @@ import {
     CodeMirrorDiffable,
     UpdateMessageContents,
     CodeMirror,
-    autosave_timeout_ms,
+    auto_update_timeout_ms,
     rand,
 } from "./shared.mjs";
 import { show_toast } from "./show_toast.mjs";
@@ -107,7 +107,7 @@ declare global {
                 cursor_position?: CursorPosition,
                 scroll_line?: number,
             ) => Promise<void>;
-            on_save: (_only_if_dirty: boolean) => Promise<void>;
+            send_update: (_only_if_dirty: boolean) => Promise<void>;
             scroll_to_line: (
                 cursor_position?: CursorPosition,
                 scroll_line?: number,
@@ -122,9 +122,9 @@ declare global {
 // Globals
 // -------
 //
-// The ID of the autosave timer; when this timer expires, the document will be
-// autosaved.
-let autosaveTimeoutId: null | number = null;
+// The ID of the auto update timer; when this timer expires, the document will
+// be updated.
+let autoUpdateTimeoutId: null | number = null;
 
 // Store the lexer info for the currently-loaded language.
 //
@@ -173,7 +173,7 @@ const is_doc_only = () => {
 const open_lp = async (
     codechat_for_web: CodeChatForWeb,
     is_re_translation: boolean,
-    cursor_line?: CursorPosition,
+    cursor_position?: CursorPosition,
     scroll_line?: number,
 ) =>
     // Wait for the DOM to load before opening the file.
@@ -182,7 +182,7 @@ const open_lp = async (
             await _open_lp(
                 codechat_for_web,
                 is_re_translation,
-                cursor_line,
+                cursor_position,
                 scroll_line,
             );
             resolve();
@@ -219,7 +219,7 @@ const _open_lp = async (
 
     // Process any pending events before proceeding. Sometimes, TinyMCE has a
     // pending edit that hasn't been processed yet, meaning the `is_dirty` flag
-    // is incorrect.
+    // is incorrect. Use the raw format; see the implementation notes.
     tinymce.activeEditor?.save({ format: "raw" });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -290,11 +290,11 @@ const _open_lp = async (
                 codechat_body.innerHTML = `<div class="CodeChat-doc-contents" spellcheck="true">${doc_content}</div>`;
                 await init({
                     selector: ".CodeChat-doc-contents",
-                    // In the doc-only mode, add autosave functionality. While
-                    // there is an
+                    // In the doc-only mode, add auto update functionality.
+                    // While there is an
                     // [autosave plugin](https://www.tiny.cloud/docs/tinymce/6/autosave/),
                     // this autosave functionality is completely different from
-                    // the autosave provided here. Per
+                    // the auto update provided here. Per
                     // [handling editor events](https://www.tiny.cloud/docs/tinymce/6/events/#handling-editor-events),
                     // this is how to create a TinyMCE event handler.
                     setup: (editor: Editor) => {
@@ -310,7 +310,7 @@ const _open_lp = async (
                                 // `event` data instead.
                                 event.target.setDirty(false);
                                 is_dirty = true;
-                                startAutosaveTimer();
+                                startAutoUpdateTimer();
                             },
                         );
                         // Send updates on cursor movement.
@@ -321,7 +321,7 @@ const _open_lp = async (
                                     Events.EditorEventMap["SelectionChange"]
                                 >,
                             ) => {
-                                startAutosaveTimer();
+                                startAutoUpdateTimer();
                             },
                         );
                     },
@@ -371,8 +371,8 @@ const _open_lp = async (
         //
         // Per the discussion at the beginning of this function, the dirty
         // contents have been overwritten by contents from the IDE. By the same
-        // reasoning, restart the autosave timer.
-        clearAutosaveTimer();
+        // reasoning, restart the auto update timer.
+        clearAutoUpdateTimer();
         is_dirty = false;
 
         // <a id="CodeChatEditor_test"></a>If tests should be run, then the
@@ -403,6 +403,8 @@ const save_lp = async (
                 DomLocation: {
                     dom_path: location.selection_path,
                     dom_offset: location.selection_offset,
+                    // Use this since it's a Markdown-only file; the server will
+                    // ignore this value.
                     from: 0,
                 },
             };
@@ -427,7 +429,7 @@ const save_lp = async (
                 // To save a document only, simply get the HTML from the only
                 // Tiny MCE div. Update the `doc_contents` to stay in sync with
                 // the Server.
-                doc_content = tinymce.activeEditor!.save();
+                doc_content = tinymce.activeEditor!.save({ format: "raw" });
                 (
                     code_mirror_diffable as {
                         Plain: CodeMirror;
@@ -495,7 +497,7 @@ export const saveSelection = () => {
             if (p === null) {
                 return {
                     selection_path: [],
-                    selection_offset: 0,
+                    selection_offset: undefined,
                 };
             }
             selection_path.unshift(
@@ -550,12 +552,13 @@ export const restoreSelection = ({
     }
 };
 
-// Save CodeChat Editor contents.
-const on_save = async (only_if_dirty: boolean = false) => {
+// Save CodeChat Editor contents if dirty; send the current selection and scroll
+// position.
+const send_update = async (only_if_dirty: boolean = false) => {
     if (only_if_dirty && !is_dirty) {
         return;
     }
-    clearAutosaveTimer();
+    clearAutoUpdateTimer();
 
     // <a id="save"></a>Save the provided contents back to the filesystem, by
     // sending an update message over the websocket.
@@ -567,25 +570,26 @@ const on_save = async (only_if_dirty: boolean = false) => {
     is_dirty = false;
 };
 
-// ### Autosave feature
+// ### Auto update feature
 //
-// Schedule an autosave; call this whenever the document is modified.
-export const startAutosaveTimer = () => {
-    // When the document is changed, perform an autosave after no changes have
-    // occurred for a little while. To do this, first cancel any current
-    // timeout...
-    clearAutosaveTimer();
-    // ...then start another timeout which saves the document when it expires.
-    autosaveTimeoutId = window.setTimeout(() => {
-        console_log("CodeChat Editor Client: autosaving.");
-        on_save();
-    }, autosave_timeout_ms);
+// Schedule an autosave and/or a selection/scroll update; call this whenever the
+// document is modified or the selection/scroll offset changes.
+export const startAutoUpdateTimer = () => {
+    // When the document/selection/scroll position is changed, perform an auto
+    // update after no changes have occurred for a little while. To do this,
+    // first cancel any current timeout...
+    clearAutoUpdateTimer();
+    // ...then start another timeout which updates the document when it expires.
+    autoUpdateTimeoutId = window.setTimeout(() => {
+        console_log("CodeChat Editor Client: auto updating.");
+        send_update();
+    }, auto_update_timeout_ms);
 };
 
-const clearAutosaveTimer = () => {
-    if (autosaveTimeoutId !== null) {
-        clearTimeout(autosaveTimeoutId);
-        autosaveTimeoutId = null;
+const clearAutoUpdateTimer = () => {
+    if (autoUpdateTimeoutId !== null) {
+        clearTimeout(autoUpdateTimeoutId);
+        autoUpdateTimeoutId = null;
     }
 };
 
@@ -668,7 +672,7 @@ const on_click = (event: MouseEvent) => {
 // Save the current document, then navigate to the provided URL, which must be a
 // reference to another CodeChat Editor document.
 const save_then_navigate = (codeChatEditorUrl: URL) => {
-    on_save(true).then((_value) => {
+    send_update(true).then((_value) => {
         // Avoid recursion!
         window.navigation.removeEventListener("navigate", on_navigate);
         parent.window.CodeChatEditorFramework.webSocketComm.current_file(
@@ -728,7 +732,7 @@ on_dom_content_loaded(async () => {
 
     window.CodeChatEditor = {
         open_lp,
-        on_save,
+        send_update,
         scroll_to_line,
         show_toast,
         allow_navigation: false,

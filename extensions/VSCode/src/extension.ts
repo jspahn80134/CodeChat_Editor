@@ -39,7 +39,7 @@ import { CodeChatEditorServer, initServer } from "./index.js";
 
 // ### Local packages
 import {
-    autosave_timeout_ms,
+    auto_update_timeout_ms,
     EditorMessage,
     EditorMessageContents,
     KeysOfRustEnum,
@@ -662,7 +662,7 @@ const send_update = (this_is_dirty: boolean) => {
         if (idle_timer !== undefined) {
             clearTimeout(idle_timer);
         }
-        // ... schedule a render after an autosave timeout.
+        // ... schedule a render after an auto update timeout.
         idle_timer = setTimeout(async () => {
             if (can_render()) {
                 const ate = vscode.window.activeTextEditor;
@@ -716,7 +716,7 @@ const send_update = (this_is_dirty: boolean) => {
                     scroll_position,
                 );
             }
-        }, autosave_timeout_ms);
+        }, auto_update_timeout_ms);
     }
 };
 
