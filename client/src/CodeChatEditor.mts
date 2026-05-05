@@ -313,6 +313,17 @@ const _open_lp = async (
                                 startAutosaveTimer();
                             },
                         );
+                        // Send updates on cursor movement.
+                        editor.on(
+                            "SelectionChange",
+                            (
+                                _event: EditorEvent<
+                                    Events.EditorEventMap["SelectionChange"]
+                                >,
+                            ) => {
+                                startAutosaveTimer();
+                            },
+                        );
                     },
                 });
                 tinymce.activeEditor!.focus();
@@ -384,7 +395,18 @@ const save_lp = async (
         is_re_translation: false,
     };
     if (is_doc_only()) {
-        // TODO: set cursor/scroll position.
+        const location = saveSelection();
+        // If there's a selection (cursor location), send it to the server,
+        // which will locate the corresponding line.
+        if (location.selection_offset !== undefined) {
+            update.cursor_position = {
+                DomLocation: {
+                    dom_path: location.selection_path,
+                    dom_offset: location.selection_offset,
+                    from: 0,
+                },
+            };
+        }
     } else {
         set_CodeMirror_positions(update);
     }
