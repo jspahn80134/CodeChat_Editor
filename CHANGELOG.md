@@ -27,6 +27,7 @@ Changelog
 * Improve browser automated testing framework.
 * Add the ability for the IDE cursor to follow the line when the Client cursor
   is in a doc block.
+* Add the ability to create pre-releases for testing.
 
 Version 0.1.54 -- 2026-Apr-16
 -----------------------------
