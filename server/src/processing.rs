@@ -604,8 +604,8 @@ impl HtmlToMarkdownWrapped {
 pub fn doc_block_html_to_markdown(
     mut code_doc_block_vec: Vec<CodeDocBlock>,
     // If provided, the index of each successive node in the DOM, ending with
-    // the offset within the last node (which must be a text node), at which a
-    // marker character will be inserted.
+    // the offset in UTF-16 characters within the last node (which must be a
+    // text node) at which a marker character will be inserted.
     //
     // For this reason, when provided, this function must called with a vec
     // containing only one doc block.
@@ -621,17 +621,25 @@ pub fn doc_block_html_to_markdown(
             let tree = html_to_tree(&doc_block.contents, dom_location)?;
             dehydrating_walk_node(&tree);
 
+            // Calculate the total delimiter width: the delimiter width plus the
+            // extra space after it. Special case: an empty delimiter means
+            // we're wrapping a Markdown document to insert a marker, so don't
+            // add the extra space.
+            let delimiter_width = doc_block.delimiter.chars().count();
+            let total_delimiter_width = if delimiter_width > 0 {
+                delimiter_width + 1
+            } else {
+                0
+            };
             // Compute a line wrap width based on the current indent. Set a
             // minimum of half the line wrap width, to prevent ridiculous
             // wrapping with large indents.
             converter.set_line_width(max(
                 WORD_WRAP_MIN_WIDTH,
-                // The +1 factor is for the space separating the delimiter and
-                // the comment text. Use `min` to avoid overflow with unsigned
-                // subtraction.
+                // Use `min` to avoid overflow with unsigned subtraction.
                 WORD_WRAP_COLUMN
                     - min(
-                        doc_block.delimiter.chars().count() + 1 + doc_block.indent.chars().count(),
+                        total_delimiter_width + doc_block.indent.chars().count(),
                         WORD_WRAP_COLUMN,
                     ),
             ));
@@ -974,7 +982,6 @@ static MINIFY_OPTIONS: LazyLock<minify_html::Cfg> = LazyLock::new(|| {
     cfg.allow_noncompliant_unquoted_attribute_values = false;
     cfg.allow_optimal_entities = false;
     cfg.allow_removing_spaces_between_attributes = false;
-    cfg.keep_closing_tags = true;
     cfg.keep_comments = true;
     cfg.keep_html_and_head_opening_tags = true;
     cfg.minify_doctype = false;
@@ -1100,7 +1107,7 @@ fn html_to_tree(
         // Each element in `dom_offsets` is the index of a node in the `dom`.
         // Take the first index, then descend into the indicated node. Repeat
         // this process until the last node, which should be a text node. The
-        // last index is the offset with the text contents to insert a
+        // last index is the UTF-16 offset with the text contents to insert a
         // `UNICODE_CURSOR_MARKER` character. Any failures (index exceeds number
         // of nodes, etc.) use an approximation where possible.
         let mut current_node = get_dom_body(&dom.document);
@@ -1122,11 +1129,7 @@ fn html_to_tree(
         if let NodeData::Text { contents } = &current_node.data {
             let mut text = contents.borrow().to_string();
             // Convert the character offset into a byte offset.
-            let byte_offset = text
-                .char_indices()
-                .nth(*dom_offset)
-                .map(|(b, _)| b)
-                .unwrap_or(text.len());
+            let byte_offset = byte_index_of(&text, *dom_offset);
             text.insert(byte_offset, UNICODE_CURSOR_MARKER);
             *contents.borrow_mut() = text.into();
         }

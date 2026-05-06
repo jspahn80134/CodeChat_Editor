@@ -1345,20 +1345,15 @@ fn compare_html(
     if let Ok(raw_html) = transform_html(raw_html, compare_html_walker)
         && let Ok(raw_html) = minify(&raw_html)
     {
-        let normalized_html = normalized_html
-            // pulldown-cmark puts a newline after a `<br>`, which `minify`
-            // doesn't remove but TinyMCE does.
-            .replace("<br> ", "<br>")
-            // Fix differences between TinyMCE and the forward process. There
-            // are probably other cases out there...
-            .replace(
-                "<input type=\"checkbox\" checked=\"\">",
-                "<input type=\"checkbox\" checked=\"checked\">",
-            )
-            // TinyMCE wraps an `<iframe>` in a paragraph. The forward process
-            // doesn't.
-            .replace("<iframe", "<p><iframe")
-            .replace("</iframe>", "</iframe></p>");
+        // pulldown-cmark puts a newline after a `<br>`, which `minify`
+        // doesn't remove but TinyMCE does.
+        let normalized_html = normalized_html.replace("<br> ", "<br>");
+        // TinyMCE wraps an `<iframe>` in paragraph tags: for example, `<p>Previous paragraph</p><p><iframe>...</iframe></p>`, which minifies to `<p>Previous paragraph<p><iframe>...</iframe>`. The IDE doesn't wrap the `<iframe>`; for example, `<p>Previous paragraph</p><iframe>...</iframe>`, which minifies to `<p>Previous paragraph</p><iframe>...</iframe>`. Fix up this difference.
+        let raw_html = raw_html.replace("<p><iframe ", "</p><iframe ");
+        if normalized_html != raw_html {
+            println!("Comparison failed.\n    IDE: {normalized_html:#?}\nTinyMCE: {raw_html:#?}");
+        }
+
         normalized_html == raw_html
     } else {
         false
@@ -1414,7 +1409,7 @@ mod tests {
             to: 20,
             indent: "".to_string(),
             delimiter: "//".to_string(),
-            contents: "<ul><li><input type=\"checkbox\" checked>Task list</li></ul><p>Line<br> break</p><p>Non-breaking\u{a0} space.</p><iframe frameborder=\"0\" height=\"314\" src=\"https://www.youtube.com/embed/Hp076_dxuVU\" width=\"560\" allowfullscreen></iframe>".to_string(),
+            contents: "<ul><li><input checked type=checkbox>Task list</ul><p>Line<br> break<p>Non-breaking\u{a0} space.</p><iframe allowfullscreen frameborder=0 height=314 src=https://www.youtube.com/embed/Hp076_dxuVU width=560></iframe>".to_string(),
         }];
         let client = vec![CodeMirrorDocBlock {
             from: 0,
@@ -1422,6 +1417,25 @@ mod tests {
             indent: "".to_string(),
             delimiter: "//".to_string(),
             contents: "<ul><li><input type=\"checkbox\" checked=\"checked\">Task list</li></ul><p>Line<br>break</p><p>Non-breaking&nbsp; space.</p><p><span contenteditable=\"false\" data-mce-object=\"iframe\" class=\"mce-preview-object mce-object-iframe\" data-mce-p-allowfullscreen=\"allowfullscreen\" data-mce-p-src=\"https://www.youtube.com/embed/Hp076_dxuVU\" data-mce-p-frameborder=\"0\"><iframe width=\"560\" height=\"314\" src=\"https://www.youtube.com/embed/Hp076_dxuVU\" allowfullscreen=\"allowfullscreen\" frameborder=\"0\"></iframe><span class=\"mce-shim\"></span></span></p>".to_string(),
+        }];
+        assert!(doc_blocks_compare(&ide, &client));
+    }
+
+    #[test]
+    fn test_x2() {
+        let ide = vec![CodeMirrorDocBlock {
+            from: 0,
+            to: 20,
+            indent: "".to_string(),
+            delimiter: "//".to_string(),
+            contents: "<ol><li><ol><li>1</ol></ol>".to_string(),
+        }];
+        let client = vec![CodeMirrorDocBlock {
+            from: 0,
+            to: 20,
+            indent: "".to_string(),
+            delimiter: "//".to_string(),
+            contents: "<ol> <li> <ol> <li> 1 </ol> </li> </ol> </li>".to_string(),
         }];
         assert!(doc_blocks_compare(&ide, &client));
     }
