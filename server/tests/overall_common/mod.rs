@@ -82,7 +82,14 @@ impl ExpectedMessages {
         ExpectedMessages(HashMap::new())
     }
 
-    pub fn insert(&mut self, editor_message: EditorMessage, is_dynamic: bool) {
+    pub fn insert(
+        &mut self,
+        editor_message: EditorMessage,
+        // For this message, copy the version from the received
+        // EditorMessage.contents.version to the same field in the message to
+        // check against.
+        is_dynamic: bool,
+    ) {
         assert!(
             self.0
                 .insert(
@@ -153,29 +160,26 @@ pub async fn harness<
     prep_test_dir: (TempDir, PathBuf),
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let (temp_dir, test_dir) = prep_test_dir;
-    // The logger gets configured by (I think)
-    // `start_webdriver_process`, which delegates to `selenium-manager`.
-    // Set logging level here.
+    // The logger gets configured by (I think) `start_webdriver_process`, which
+    // delegates to `selenium-manager`. Set logging level here.
     unsafe { env::set_var("RUST_LOG", "debug") };
     // Start the webdriver.
     let server_url = "http://localhost:4444";
     let mut caps = DesiredCapabilities::chrome();
-    // Ensure the screen is wide enough for an 80-character line, used
-    // to word wrapping test in `test_client_updates`. Otherwise, this
-    // test send the End key to go to the end of the line...but it's not
-    // the end of the full line on a narrow screen.
+    // Ensure the screen is wide enough for an 80-character line, used to word
+    // wrapping test in `test_client_updates`. Otherwise, this test send the End
+    // key to go to the end of the line...but it's not the end of the full line
+    // on a narrow screen.
     caps.add_arg("--window-size=1920,768")?;
     caps.add_arg("--headless")?;
-    // On Ubuntu CI, avoid failures, probably due to running Chrome as
-    // root.
+    // On Ubuntu CI, avoid failures, probably due to running Chrome as root.
     #[cfg(target_os = "linux")]
     if env::var("CI") == Ok("true".to_string()) {
         caps.add_arg("--disable-gpu")?;
         caps.add_arg("--no-sandbox")?;
     }
     if let Err(err) = start_webdriver_process(server_url, &caps, true) {
-        // Often, the "failure" is that the webdriver is already
-        // running.
+        // Often, the "failure" is that the webdriver is already running.
         eprintln!("Failed to start the webdriver process: {err:#?}");
     }
     // Wait for the driver to start up.
@@ -183,10 +187,9 @@ pub async fn harness<
     let driver = WebDriver::new(server_url, caps).await?;
     let driver_clone = driver.clone();
 
-    // Run the test inside an async, so we can shut down the driver
-    // before returning an error. Mark the function as unwind safe.
-    // though I'm not certain this is correct. Hopefully, it's good
-    // enough for testing.
+    // Run the test inside an async, so we can shut down the driver before
+    // returning an error. Mark the function as unwind safe. though I'm not
+    // certain this is correct. Hopefully, it's good enough for testing.
     let ret = AssertUnwindSafe(async move {
         // ### Setup
         let p = env::current_exe().unwrap().parent().unwrap().join("../..");
@@ -218,8 +221,8 @@ pub async fn harness<
 
         Ok(())
     })
-    // Catch any panics/assertions, again to ensure the driver shuts
-    // down cleanly.
+    // Catch any panics/assertions, again to ensure the driver shuts down
+    // cleanly.
     .catch_unwind()
     .await;
 
@@ -290,7 +293,8 @@ pub async fn goto_line(
         .await
         .unwrap();
     // The cursor movement produces a cursor/scroll position update after an
-    // autosave delay. Sometimes, we get an update just before the movement; ignore that.
+    // autosave delay. Sometimes, we get an update just before the movement;
+    // ignore that.
     let mut msg = codechat_server.get_message_timeout(TIMEOUT).await.unwrap();
     if msg.id == *client_id
         && let EditorMessageContents::Update(update) = &msg.message
@@ -460,5 +464,28 @@ pub async fn assert_no_more_messages(codechat_server: &CodeChatEditorServer) {
         .await
     {
         panic!("Unprocessed messages: {:#?}", msg);
+    }
+}
+
+/// Wait for a message. If it matches the provided optional message, acknowledge
+/// it and update the client ID, then wait for another message. Return the most
+/// recently received message.
+pub async fn optional_message(
+    codechat_server: &CodeChatEditorServer,
+    client_id: &mut f64,
+    optional_message: EditorMessageContents,
+) -> EditorMessage {
+    let msg = codechat_server.get_message_timeout(TIMEOUT).await.unwrap();
+    if msg
+        == (EditorMessage {
+            id: *client_id,
+            message: optional_message,
+        })
+    {
+        codechat_server.send_result(*client_id, None).await.unwrap();
+        *client_id += MESSAGE_ID_INCREMENT;
+        codechat_server.get_message_timeout(TIMEOUT).await.unwrap()
+    } else {
+        msg
     }
 }

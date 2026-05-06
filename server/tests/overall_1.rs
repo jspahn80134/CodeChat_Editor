@@ -38,8 +38,7 @@ use tokio::time::sleep;
 
 // ### Local
 use crate::overall_common::{
-    ExpectedMessages, TIMEOUT, assert_no_more_messages, get_version, goto_line, perform_loadfile,
-    select_codechat_iframe,
+    ExpectedMessages, TIMEOUT, assert_no_more_messages, get_version, goto_line, optional_message, perform_loadfile, select_codechat_iframe
 };
 use code_chat_editor::{
     ide::CodeChatEditorServer,
@@ -384,7 +383,19 @@ async fn test_server_core(
     body_content.send_keys("foo ").await.unwrap();
     let md_path = canonicalize(test_dir.join("test.md")).unwrap();
     let md_path_str = md_path.to_str().unwrap().to_string();
-    let msg = codechat_server.get_message_timeout(TIMEOUT).await.unwrap();
+    // Sometimes, a cursor update gets sent before the edit.
+    let msg = optional_message(
+        &codechat_server,
+        &mut client_id,
+        EditorMessageContents::Update(UpdateMessageContents {
+            file_path: path_str.clone(),
+            cursor_position: Some(CursorPosition::Line(1)),
+            scroll_position: None,
+            is_re_translation: false,
+            contents: None,
+        }),
+    )
+    .await;
     let client_version = get_version(&msg);
     assert_eq!(
         msg,
@@ -459,6 +470,23 @@ async fn test_server_core(
         body_content.inner_html().await.unwrap(),
         "<p>food A <strong>markdown</strong> file.</p>"
     );
+
+    // Wait for a cursor update produced by the edit.
+    assert_eq!(
+        codechat_server.get_message_timeout(TIMEOUT).await.unwrap(),
+        EditorMessage {
+            id: client_id,
+            message: EditorMessageContents::Update(UpdateMessageContents {
+                file_path: md_path_str.clone(),
+                cursor_position: Some(CursorPosition::Line(1)),
+                scroll_position: None,
+                is_re_translation: false,
+                contents: None,
+            })
+        }
+    );
+    codechat_server.send_result(client_id, None).await.unwrap();
+    client_id += MESSAGE_ID_INCREMENT;
 
     // ### Unsupported document
     let txt_path = canonicalize(test_dir.join("test.txt")).unwrap();
