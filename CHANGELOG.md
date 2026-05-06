@@ -28,6 +28,8 @@ Changelog
 * Add the ability for the IDE cursor to follow the line when the Client cursor
   is in a doc block.
 * Add the ability to create pre-releases for testing.
+* Improve cursor tracking in a re-translation.
+* Reduce unnecessary re-translations with better HTML comparison.
 
 Version 0.1.54 -- 2026-Apr-16
 -----------------------------

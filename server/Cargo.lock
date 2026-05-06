@@ -1895,7 +1895,7 @@ dependencies = [
 [[package]]
 name = "htmd"
 version = "0.5.4"
-source = "git+https://github.com/bjones1/htmd.git?branch=dom-interface#68b5d9cfa22131ea32c71fa480b6746828700cc6"
+source = "git+https://github.com/bjones1/htmd.git?branch=dom-interface#deafeb4b579530a94314828218cfbda79c615ef8"
 dependencies = [
  "html5ever",
  "markup5ever_rcdom",
@@ -1904,9 +1904,9 @@ dependencies = [
 
 [[package]]
 name = "html5ever"
-version = "0.38.0"
+version = "0.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1054432bae2f14e0061e33d23402fbaa67a921d319d56adc6bcf887ddad1cbc2"
+checksum = "46a1761807faccc9a19e86944bbf40610014066306f96edcdedc2fb714bcb7b8"
 dependencies = [
  "log",
  "markup5ever",
@@ -2299,16 +2299,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d98f6fed1fde3f8c21bc40a1abb88dd75e67924f9cffc3ef95607bad8017f8e2"
 
 [[package]]
-name = "iri-string"
-version = "0.7.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "25e659a4bb38e810ebc252e53b5814ff908a8c58c2a9ce2fae1bbec24cbf4e20"
-dependencies = [
- "memchr",
- "serde",
-]
-
-[[package]]
 name = "is_executable"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2675,9 +2665,9 @@ dependencies = [
 
 [[package]]
 name = "markup5ever"
-version = "0.38.0"
+version = "0.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8983d30f2915feeaaab2d6babdd6bc7e9ed1a00b66b5e6d74df19aa9c0e91862"
+checksum = "7122d987ec5f704ee56f6e5b41a7d93722e9aae27ae07cafa4036c4d3f9757de"
 dependencies = [
  "log",
  "tendril",
@@ -2686,9 +2676,9 @@ dependencies = [
 
 [[package]]
 name = "markup5ever_rcdom"
-version = "0.38.0+unofficial"
+version = "0.39.0+unofficial"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "333171ccdf66e915257740d44e38ea5b1b19ce7b45d33cc35cb6f118fbd981ff"
+checksum = "3ac010f19d6c4af81eeb4018a39d7a115de9d285af45c126a4ac02e6fc5716b7"
 dependencies = [
  "html5ever",
  "markup5ever",
@@ -2747,7 +2737,7 @@ dependencies = [
 [[package]]
 name = "minify-html"
 version = "0.18.1"
-source = "git+https://github.com/bjones1/minify-html.git?branch=dev#3eada4dbef725de3ea4ca5075ec9c12618ea4ece"
+source = "git+https://github.com/bjones1/minify-html.git?branch=dev#b5cce1953106d00b5e622214a99457d3312c5fa9"
 dependencies = [
  "ahash 0.8.12",
  "aho-corasick",
@@ -2765,7 +2755,7 @@ dependencies = [
 [[package]]
 name = "minify-html-common"
 version = "0.0.3"
-source = "git+https://github.com/bjones1/minify-html.git?branch=dev#3eada4dbef725de3ea4ca5075ec9c12618ea4ece"
+source = "git+https://github.com/bjones1/minify-html.git?branch=dev#b5cce1953106d00b5e622214a99457d3312c5fa9"
 dependencies = [
  "ahash 0.8.12",
  "aho-corasick",
@@ -5214,20 +5204,20 @@ dependencies = [
 
 [[package]]
 name = "tower-http"
-version = "0.6.8"
+version = "0.6.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d4e6559d53cc268e5031cd8429d05415bc4cb4aefc4aa5d6cc35fbf5b924a1f8"
+checksum = "a28f0d049ccfaa566e14e9663d304d8577427b368cb4710a20528690287a738b"
 dependencies = [
  "bitflags",
  "bytes",
  "futures-util",
  "http 1.4.0",
  "http-body",
- "iri-string",
  "pin-project-lite",
  "tower",
  "tower-layer",
  "tower-service",
+ "url",
 ]
 
 [[package]]
@@ -6195,9 +6185,9 @@ checksum = "3ae8337f8a065cfc972643663ea4279e04e7256de865aa66fe25cec5fb912d3f"
 
 [[package]]
 name = "xml5ever"
-version = "0.38.0"
+version = "0.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3dc9559429edf0cd3f327cc0afd9d6b36fa8cec6d93107b7fbe64f806b5f2d9"
+checksum = "5ab627f34ff61b80d756180d556f9c68801d836d271b3b8c094504ceca69d221"
 dependencies = [
  "log",
  "markup5ever",
