@@ -38,7 +38,8 @@ use tokio::time::sleep;
 
 // ### Local
 use crate::overall_common::{
-    ExpectedMessages, TIMEOUT, assert_no_more_messages, get_version, goto_line, optional_message, perform_loadfile, select_codechat_iframe
+    ExpectedMessages, TIMEOUT, assert_no_more_messages, get_version, goto_line, optional_message,
+    perform_loadfile, select_codechat_iframe,
 };
 use code_chat_editor::{
     ide::CodeChatEditorServer,
@@ -149,7 +150,7 @@ async fn test_server_core(
                         doc: vec![StringDiff {
                             from: 0,
                             to: Some(7),
-                            insert: "# Testfoo\n".to_string()
+                            insert: "# Tesfoot\n".to_string()
                         }],
                         doc_blocks: vec![],
                         version,
@@ -185,7 +186,7 @@ async fn test_server_core(
                         doc: vec![StringDiff {
                             from: 0,
                             to: Some(10),
-                            insert: "  # Testfoo\n".to_string(),
+                            insert: "  # Tesfoot\n".to_string(),
                         }],
                         doc_blocks: vec![],
                         version,
@@ -388,7 +389,7 @@ async fn test_server_core(
         &codechat_server,
         &mut client_id,
         EditorMessageContents::Update(UpdateMessageContents {
-            file_path: path_str.clone(),
+            file_path: md_path_str.clone(),
             cursor_position: Some(CursorPosition::Line(1)),
             scroll_position: None,
             is_re_translation: false,

@@ -470,7 +470,7 @@ export const saveSelection = () => {
     if (sel?.anchorNode) {
         // Find a path from the selection back to the containing div.
         for (
-            let current_node = sel.anchorNode, is_first = true;
+            let current_node = sel.anchorNode;
             // Continue until we find the div which contains the doc block
             // contents: either it's not an element (such as a div), ...
             current_node.nodeType !== Node.ELEMENT_NODE ||
@@ -482,15 +482,10 @@ export const saveSelection = () => {
                 // the TinyMCE div and returns the overall div. I don't know
                 // why.
                 !(current_node as Element).classList.contains("CodeChat-doc"));
-            current_node = current_node.parentNode!, is_first = false
+            current_node = current_node.parentNode!
         ) {
             // Store the index of this node in its' parent list of child
-            // nodes/children. Use `childNodes` on the first iteration, since
-            // the selection is often in a text node, which isn't in the
-            // `parents` list. However, using `childNodes` all the time causes
-            // trouble when reversing the selection -- sometimes, the
-            // `childNodes` change based on whether text nodes (such as a
-            // newline) are included are not after tinyMCE parses the content.
+            // nodes/children.
             const p = current_node.parentNode;
             // In case we go off the rails, give up if there are no more
             // parents.
@@ -501,10 +496,7 @@ export const saveSelection = () => {
                 };
             }
             selection_path.unshift(
-                Array.prototype.indexOf.call(
-                    is_first ? p.childNodes : p.children,
-                    current_node,
-                ),
+                Array.prototype.indexOf.call(p.childNodes, current_node),
             );
         }
     }
@@ -524,30 +516,25 @@ export const restoreSelection = ({
     // the selected node.
     if (selection_path.length && typeof selection_offset === "number") {
         let selection_node = tinymce.activeEditor!.getContentAreaContainer();
-        for (
-            ;
-            selection_path.length &&
-            // If something goes wrong, bail out instead of producing
-            // exceptions.
-            selection_node !== undefined;
-            selection_node =
-                // As before, use the more-consistent `children` except for the
-                // last element, where we might be selecting a `text` node.
-                (
-                    selection_path.length > 1
-                        ? selection_node.children
-                        : selection_node.childNodes
-                )[selection_path.shift()!]! as HTMLElement
-        );
-        // Exit on failure.
-        if (selection_node === undefined) {
-            return;
+        while (selection_path.length) {
+            const new_selection_node = selection_node.childNodes[
+                selection_path.shift()!
+            ] as HTMLElement;
+            // If we get lost during the descent, then stop just before that.
+            if (new_selection_node === undefined) {
+                break;
+            }
+            selection_node = new_selection_node;
         }
+        // In case of edits, avoid an offset past the end of the node.
+        const final_selection_offset = Math.min(
+            selection_offset,
+            (selection_node.nodeValue?.length ?? 1) - 1,
+        );
         // Use that to set the selection.
         tinymce.activeEditor!.selection.setCursorLocation(
             selection_node,
-            // In case of edits, avoid an offset past the end of the node.
-            Math.min(selection_offset, selection_node.nodeValue?.length ?? 0),
+            final_selection_offset,
         );
     }
 };
