@@ -579,13 +579,7 @@ fn test_source_to_codechat_for_web_1() {
             "javascript",
             "\nlet a = 1;\n\n",
             vec![
-                build_codemirror_doc_block(
-                    0,
-                    1,
-                    "",
-                    "//",
-                    "<p><a href=http://b.org>Link</a></p>"
-                ),
+                build_codemirror_doc_block(0, 1, "", "//", "<p><a href=http://b.org>Link</a></p>"),
                 build_codemirror_doc_block(12, 13, "", "/*", "")
             ]
         )))
@@ -656,13 +650,7 @@ fn test_source_to_codechat_for_web_1() {
         Ok(TranslationResults::CodeChat(build_codechat_for_web(
             "cpp",
             "\n;",
-            vec![build_codemirror_doc_block(
-                0,
-                1,
-                "",
-                "//",
-                "<p>σ😄👉🏿👨‍👦🇺🇳"
-            ),]
+            vec![build_codemirror_doc_block(0, 1, "", "//", "<p>σ😄👉🏿👨‍👦🇺🇳"),]
         )))
     );
 
