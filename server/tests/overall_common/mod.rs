@@ -128,6 +128,11 @@ impl ExpectedMessages {
 // and loadfile acknowledgements under matrix load.
 pub const TIMEOUT: Duration = Duration::from_millis(15000);
 
+// Browser-backed tests share a single WebDriver endpoint. Safari on macOS CI is
+// unreliable with overlapping sessions, so serialize the harness.
+pub(crate) static WEB_DRIVER_TEST_LOCK: tokio::sync::Mutex<()> =
+    tokio::sync::Mutex::const_new(());
+
 // ### Test harness
 //
 // A test harness. It runs the webdriver, the Server, opens the Client, then
@@ -152,6 +157,7 @@ macro_rules! harness {
             // The output from calling `prep_test_dir!()`.
             prep_test_dir: (TempDir, PathBuf),
         ) -> Result<(), Box<dyn Error + Send + Sync>> {
+            let _webdriver_test_lock = $crate::overall_common::WEB_DRIVER_TEST_LOCK.lock().await;
             let (temp_dir, test_dir) = prep_test_dir;
             // The logger gets configured by (I think)
             // `start_webdriver_process`, which delegates to `selenium-manager`.
