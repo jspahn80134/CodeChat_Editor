@@ -123,9 +123,10 @@ impl ExpectedMessages {
     }
 }
 
-// Time to wait for browser/WebDriver-backed client-server messages. macOS CI can
-// take a little over two seconds to return loadfile acknowledgements.
-pub const TIMEOUT: Duration = Duration::from_millis(5000);
+// Time to wait for browser/WebDriver-backed client-server messages. This
+// matches the client-side response window and gives CI enough room for autosave
+// and loadfile acknowledgements under matrix load.
+pub const TIMEOUT: Duration = Duration::from_millis(15000);
 
 // ### Test harness
 //
