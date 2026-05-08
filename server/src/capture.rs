@@ -644,8 +644,8 @@ async fn insert_rich_event(
              ($1, $2, $3, \
               $4, $5, $6, $7, $8, $9, $10, \
               $11, $12, $13, $14, $15, $16, \
-              $17, $18::timestamptz, $19, $20, \
-              $21, $22::jsonb)",
+              $17, $18::text::timestamptz, $19, $20, \
+              $21, $22::text::jsonb)",
             &[
                 &event_id,
                 &sequence_number,
@@ -690,7 +690,7 @@ async fn insert_legacy_event(
         .execute(
             "INSERT INTO events \
              (user_id, assignment_id, group_id, file_path, event_type, timestamp, data) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+             VALUES ($1, $2, $3, $4, $5, $6::text::timestamptz, $7::text::jsonb)",
             &[
                 &event.user_id,
                 &event.assignment_id,
@@ -836,14 +836,15 @@ mod tests {
     use std::fs;
     //use tokio::time::{sleep, Duration};
 
-    /// Integration-style test: verify that EventCapture actually inserts into
-    /// the DB.
+    /// Integration-style test: verify that EventCapture inserts into the rich
+    /// capture schema used by dissertation analysis.
     ///
     /// Reads connection parameters from `capture_config.json` in the current
     /// working directory. Logs the config and connection details via log4rs so
     /// you can confirm what is used.
     ///
-    /// Run this test with: cargo test event\_capture\_inserts\_event\_into\_db
+    /// Run this test with:
+    /// cargo test event\_capture\_inserts\_rich_schema\_event\_into\_db
     /// -- --ignored --nocapture
     ///
     /// You must have a PostgreSQL database and a `capture_config.json` file
@@ -852,7 +853,8 @@ mod tests {
     /// "codechat\_capture\_test", "app\_id": "integration-test" }
     #[tokio::test]
     #[ignore]
-    async fn event_capture_inserts_event_into_db() -> Result<(), Box<dyn std::error::Error>> {
+    async fn event_capture_inserts_rich_schema_event_into_db()
+    -> Result<(), Box<dyn std::error::Error>> {
         // Initialize logging for this test, using the same log4rs.yml as the
         // server. If logging is already initialized, this will just return an
         // error which we ignore.
@@ -860,7 +862,10 @@ mod tests {
 
         // 1. Load the capture configuration from file.
         let cfg_text = fs::read_to_string("capture_config.json")
-            .expect("capture_config.json must exist in project root for this test");
+            .or_else(|_| fs::read_to_string("../capture_config.json"))
+            .expect(
+                "capture_config.json must exist in the server directory or repo root for this test",
+            );
         let cfg: CaptureConfig =
             serde_json::from_str(&cfg_text).expect("capture_config.json must be valid JSON");
 
@@ -883,64 +888,83 @@ mod tests {
             }
         });
 
-        // Verify the events table already exists
-        let row = client
-            .query_one(
-                r#"
-                SELECT EXISTS (
-                    SELECT 1
-                    FROM information_schema.tables
+        let required_columns = [
+            "event_id",
+            "sequence_number",
+            "schema_version",
+            "condition",
+            "course_id",
+            "task_id",
+            "session_id",
+            "event_source",
+            "language_id",
+            "file_hash",
+            "path_privacy",
+            "capture_mode",
+            "client_timestamp_ms",
+            "client_tz_offset_min",
+            "server_timestamp_ms",
+        ];
+        for column in required_columns {
+            let row = client
+                .query_one(
+                    r#"
+                    SELECT data_type
+                    FROM information_schema.columns
                     WHERE table_schema = 'public'
-                    AND table_name   = 'events'
-                ) AS exists
-                "#,
-                &[],
-            )
-            .await?;
-
-        let exists: bool = row.get("exists");
-        assert!(
-            exists,
-            "TEST SETUP ERROR: public.events table does not exist. \
-            It must be created by a migration or admin step."
-        );
-
-        // Insert a single test row (this is what the app really needs)
-        let test_user_id = format!(
-            "TEST_USER_{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_millis()
-        );
-
-        let insert_row = client
-            .query_one(
-                r#"
-                INSERT INTO public.events
-                    (user_id, assignment_id, group_id, file_path, event_type, timestamp, data)
-                VALUES
-                    ($1, NULL, NULL, NULL, 'test_event', $2::timestamptz, '{"test":true}'::jsonb)
-                RETURNING id
-                "#,
-                &[&test_user_id, &Utc::now().to_rfc3339()],
-            )
-            .await?;
-
-        let inserted_id: i32 = insert_row.get("id");
-        info!("TEST: inserted event id={}", inserted_id);
+                      AND table_name = 'events'
+                      AND column_name = $1
+                    "#,
+                    &[&column],
+                )
+                .await
+                .map_err(|err| {
+                    format!(
+                        "TEST SETUP ERROR: missing public.events.{column}; \
+                        run server/scripts/capture_events_schema.sql first: {err}"
+                    )
+                })?;
+            let data_type: String = row.get(0);
+            info!("TEST: public.events.{column} type={data_type}");
+        }
 
         // 4. Start the EventCapture worker using the loaded config.
         let capture = EventCapture::new(cfg.clone())?;
         log::info!("TEST: EventCapture worker started.");
 
-        // 5. Log a test event.
-        let expected_data = json!({ "chars_typed": 123 });
+        // 5. Log a schema-v2 test event with all typed analysis metadata.
+        let test_suffix = Utc::now().timestamp_millis().to_string();
+        let expected_event_id = format!("TEST_EVENT_{test_suffix}");
+        let expected_user_id = format!("TEST_USER_{test_suffix}");
+        let expected_session_id = format!("TEST_SESSION_{test_suffix}");
+        let expected_file_hash = format!("TEST_FILE_HASH_{test_suffix}");
+        let event_timestamp = Utc::now();
+        let expected_server_timestamp_ms = event_timestamp.timestamp_millis();
+        let expected_client_timestamp_ms = expected_server_timestamp_ms - 50;
+        let expected_data = json!({
+            "event_id": expected_event_id,
+            "sequence_number": 42,
+            "schema_version": 2,
+            "condition": "treatment",
+            "course_id": "ece-integration",
+            "task_id": "capture-schema-test",
+            "session_id": expected_session_id,
+            "event_source": "integration_test",
+            "language_id": "rust",
+            "file_hash": expected_file_hash,
+            "path_privacy": "sha256",
+            "capture_mode": "treatment",
+            "client_timestamp_ms": expected_client_timestamp_ms,
+            "client_tz_offset_min": 360,
+            "server_timestamp_ms": expected_server_timestamp_ms,
+            "chars_typed": 123,
+            "classification_basis": "integration_test"
+        });
         let event = CaptureEvent::now(
-            "test-user".to_string(),
-            Some("hw1".to_string()),
-            Some("groupA".to_string()),
-            Some("/tmp/test.rs".to_string()),
+            expected_user_id.clone(),
+            Some("hw-integration".to_string()),
+            Some("group-integration".to_string()),
+            None,
             event_types::WRITE_DOC,
             expected_data.clone(),
         );
@@ -958,13 +982,17 @@ mod tests {
             match client
                 .query_one(
                     r#"
-                    SELECT user_id, assignment_id, group_id, file_path, event_type, data::text
+                    SELECT user_id, assignment_id, group_id, file_path, event_type,
+                           event_id, sequence_number, schema_version, condition, course_id,
+                           task_id, session_id, event_source, language_id, file_hash,
+                           path_privacy, capture_mode, client_timestamp_ms,
+                           client_tz_offset_min, server_timestamp_ms, data::text
                     FROM events
-                    WHERE user_id = $1 AND event_type = $2
+                    WHERE event_id = $1
                     ORDER BY id DESC
                     LIMIT 1
                     "#,
-                    &[&"test-user", &event_types::WRITE_DOC],
+                    &[&expected_event_id],
                 )
                 .await
             {
@@ -978,19 +1006,49 @@ mod tests {
             }
         };
 
-        let user_id: String = row.get(0);
+        let user_id: String = row.get("user_id");
         let assignment_id: Option<String> = row.get(1);
         let group_id: Option<String> = row.get(2);
         let file_path: Option<String> = row.get(3);
         let event_type: String = row.get(4);
-        let data_text: String = row.get(5);
+        let event_id: Option<String> = row.get(5);
+        let sequence_number: Option<i64> = row.get(6);
+        let schema_version: Option<i32> = row.get(7);
+        let condition: Option<String> = row.get(8);
+        let course_id: Option<String> = row.get(9);
+        let task_id: Option<String> = row.get(10);
+        let session_id: Option<String> = row.get(11);
+        let event_source: Option<String> = row.get(12);
+        let language_id: Option<String> = row.get(13);
+        let file_hash: Option<String> = row.get(14);
+        let path_privacy: Option<String> = row.get(15);
+        let capture_mode: Option<String> = row.get(16);
+        let client_timestamp_ms: Option<i64> = row.get(17);
+        let client_tz_offset_min: Option<i32> = row.get(18);
+        let server_timestamp_ms: Option<i64> = row.get(19);
+        let data_text: String = row.get(20);
         let data_value: serde_json::Value = serde_json::from_str(&data_text)?;
 
-        assert_eq!(user_id, "test-user");
-        assert_eq!(assignment_id.as_deref(), Some("hw1"));
-        assert_eq!(group_id.as_deref(), Some("groupA"));
-        assert_eq!(file_path.as_deref(), Some("/tmp/test.rs"));
+        assert_eq!(user_id, expected_user_id);
+        assert_eq!(assignment_id.as_deref(), Some("hw-integration"));
+        assert_eq!(group_id.as_deref(), Some("group-integration"));
+        assert!(file_path.is_none());
         assert_eq!(event_type, event_types::WRITE_DOC);
+        assert_eq!(event_id.as_deref(), Some(expected_event_id.as_str()));
+        assert_eq!(sequence_number, Some(42));
+        assert_eq!(schema_version, Some(2));
+        assert_eq!(condition.as_deref(), Some("treatment"));
+        assert_eq!(course_id.as_deref(), Some("ece-integration"));
+        assert_eq!(task_id.as_deref(), Some("capture-schema-test"));
+        assert_eq!(session_id.as_deref(), Some(expected_session_id.as_str()));
+        assert_eq!(event_source.as_deref(), Some("integration_test"));
+        assert_eq!(language_id.as_deref(), Some("rust"));
+        assert_eq!(file_hash.as_deref(), Some(expected_file_hash.as_str()));
+        assert_eq!(path_privacy.as_deref(), Some("sha256"));
+        assert_eq!(capture_mode.as_deref(), Some("treatment"));
+        assert_eq!(client_timestamp_ms, Some(expected_client_timestamp_ms));
+        assert_eq!(client_tz_offset_min, Some(360));
+        assert_eq!(server_timestamp_ms, Some(expected_server_timestamp_ms));
         assert_eq!(data_value, expected_data);
 
         log::info!("✅ TEST: EventCapture integration test succeeded and wrote to database.");
