@@ -130,8 +130,7 @@ pub const TIMEOUT: Duration = Duration::from_millis(15000);
 
 // Browser-backed tests share a single WebDriver endpoint. Safari on macOS CI is
 // unreliable with overlapping sessions, so serialize the harness.
-pub(crate) static WEB_DRIVER_TEST_LOCK: tokio::sync::Mutex<()> =
-    tokio::sync::Mutex::const_new(());
+pub(crate) static WEB_DRIVER_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 // ### Test harness
 //
