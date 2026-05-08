@@ -27,8 +27,10 @@ target/
 /capture_config.json
 /capture-events-fallback.jsonl
 /capture-metrics-*.csv
+/capture-analysis-*/
 /server/scripts/output
 /server/scripts/capture-metrics-*.csv
+/server/scripts/capture-analysis-*/
 server/capture_config.json
 
 # CodeChat Editor lexer: python. See TODO.

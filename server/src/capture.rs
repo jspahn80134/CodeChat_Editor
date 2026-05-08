@@ -34,28 +34,28 @@
 // Database schema
 // ----------------------------------------------------------------------------
 //
-// The following SQL statement creates the `events` table used by this module:
+// The canonical schema and migration DDL lives in
+// `server/scripts/capture_events_schema.sql`. The important analysis columns
+// are:
 //
 // ```sql
-// CREATE TABLE events (
-//     id            SERIAL PRIMARY KEY,
-//     user_id       TEXT NOT NULL,
-//     assignment_id TEXT,
-//     group_id      TEXT,
-//     file_path     TEXT,
-//     event_type    TEXT NOT NULL,
-//     timestamp     TEXT NOT NULL,
-//     data          TEXT
-// );
+// event_id, sequence_number, schema_version,
+// user_id, assignment_id, group_id, condition, course_id, task_id, session_id,
+// event_source, language_id, file_hash, file_path, path_privacy, capture_mode,
+// event_type, timestamp, client_timestamp_ms, client_tz_offset_min,
+// server_timestamp_ms, data
 // ```
 //
 // * `user_id` – participant identifier (student id, pseudonym, etc.).
-// * `assignment_id` – logical assignment / lab identifier.
-// * `group_id` – optional grouping (treatment / comparison, section).
+// * `assignment_id`, `task_id` – logical assignment / task identifiers.
+// * `group_id`, `condition`, `course_id` – study grouping metadata.
+// * `session_id`, `event_id`, `sequence_number`, `schema_version` – event
+//   integrity and versioning metadata.
 // * `file_path` – logical path of the file being edited.
+// * `file_hash` – privacy-preserving SHA-256 hash of the file path.
 // * `event_type` – coarse event type (see `event_type` constants below).
 // * `timestamp` – RFC3339 timestamp (in UTC).
-// * `data` – JSON payload with event-specific details.
+// * `data` – JSONB payload with event-specific details.
 
 use std::{
     env,
@@ -562,13 +562,127 @@ fn log_pg_connect_error(context: &str, err: &tokio_postgres::Error) {
     error!("{context}: {err}");
 }
 
+fn capture_data_str(data: &serde_json::Value, names: &[&str]) -> Option<String> {
+    names.iter().find_map(|name| {
+        data.get(*name)
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    })
+}
+
+fn capture_data_i64(data: &serde_json::Value, name: &str) -> Option<i64> {
+    let value = data.get(name)?;
+    value
+        .as_i64()
+        .or_else(|| value.as_str()?.trim().parse::<i64>().ok())
+}
+
+fn capture_data_i32(data: &serde_json::Value, name: &str) -> Option<i32> {
+    capture_data_i64(data, name).and_then(|value| i32::try_from(value).ok())
+}
+
+fn should_retry_legacy_insert(err: &tokio_postgres::Error) -> bool {
+    matches!(
+        err.code().map(|code| code.code()),
+        Some("42703" | "42P01" | "42804")
+    )
+}
+
 /// Insert a single event into the `events` table.
 async fn insert_event(client: &Client, event: &CaptureEvent) -> Result<u64, tokio_postgres::Error> {
+    match insert_rich_event(client, event).await {
+        Ok(rows) => Ok(rows),
+        Err(err) if should_retry_legacy_insert(&err) => {
+            warn!(
+                "Capture: rich events insert failed against the current schema; retrying legacy insert: {err}"
+            );
+            insert_legacy_event(client, event).await
+        }
+        Err(err) => Err(err),
+    }
+}
+
+async fn insert_rich_event(
+    client: &Client,
+    event: &CaptureEvent,
+) -> Result<u64, tokio_postgres::Error> {
+    let timestamp = event.timestamp.to_rfc3339();
+    let event_id = capture_data_str(&event.data, &["event_id"]);
+    let sequence_number = capture_data_i64(&event.data, "sequence_number");
+    let schema_version = capture_data_i32(&event.data, "schema_version");
+    let condition = capture_data_str(&event.data, &["condition"]);
+    let course_id = capture_data_str(&event.data, &["course_id"]);
+    let task_id = capture_data_str(&event.data, &["task_id"]);
+    let session_id = capture_data_str(&event.data, &["session_id"]);
+    let event_source = capture_data_str(&event.data, &["event_source"]);
+    let language_id = capture_data_str(&event.data, &["language_id", "languageId"]);
+    let file_hash = capture_data_str(&event.data, &["file_hash"]);
+    let path_privacy = capture_data_str(&event.data, &["path_privacy"]);
+    let capture_mode = capture_data_str(&event.data, &["capture_mode"]);
+    let client_timestamp_ms = capture_data_i64(&event.data, "client_timestamp_ms");
+    let client_tz_offset_min = capture_data_i32(&event.data, "client_tz_offset_min");
+    let server_timestamp_ms = capture_data_i64(&event.data, "server_timestamp_ms")
+        .unwrap_or_else(|| event.timestamp.timestamp_millis());
+    let data_text = event.data.to_string();
+
+    debug!(
+        "Capture: executing rich INSERT for user_id={}, event_type={}, timestamp={}",
+        event.user_id, event.event_type, timestamp
+    );
+
+    client
+        .execute(
+            "INSERT INTO events \
+             (event_id, sequence_number, schema_version, \
+              user_id, assignment_id, group_id, condition, course_id, task_id, session_id, \
+              event_source, language_id, file_hash, file_path, path_privacy, capture_mode, \
+              event_type, timestamp, client_timestamp_ms, client_tz_offset_min, \
+              server_timestamp_ms, data) \
+             VALUES \
+             ($1, $2, $3, \
+              $4, $5, $6, $7, $8, $9, $10, \
+              $11, $12, $13, $14, $15, $16, \
+              $17, $18::timestamptz, $19, $20, \
+              $21, $22::jsonb)",
+            &[
+                &event_id,
+                &sequence_number,
+                &schema_version,
+                &event.user_id,
+                &event.assignment_id,
+                &event.group_id,
+                &condition,
+                &course_id,
+                &task_id,
+                &session_id,
+                &event_source,
+                &language_id,
+                &file_hash,
+                &event.file_path,
+                &path_privacy,
+                &capture_mode,
+                &event.event_type,
+                &timestamp,
+                &client_timestamp_ms,
+                &client_tz_offset_min,
+                &server_timestamp_ms,
+                &data_text,
+            ],
+        )
+        .await
+}
+
+async fn insert_legacy_event(
+    client: &Client,
+    event: &CaptureEvent,
+) -> Result<u64, tokio_postgres::Error> {
     let timestamp = event.timestamp.to_rfc3339();
     let data_text = event.data.to_string();
 
     debug!(
-        "Capture: executing INSERT for user_id={}, event_type={}, timestamp={}",
+        "Capture: executing legacy INSERT for user_id={}, event_type={}, timestamp={}",
         event.user_id, event.event_type, timestamp
     );
 
@@ -664,6 +778,29 @@ mod tests {
         // Timestamp sanity check: it should be between before and after
         assert!(ev.timestamp >= before);
         assert!(ev.timestamp <= after);
+    }
+
+    #[test]
+    fn capture_metadata_helpers_extract_typed_values() {
+        let data = json!({
+            "event_id": "abc-123",
+            "sequence_number": "42",
+            "schema_version": 2,
+            "languageId": "rust",
+            "client_tz_offset_min": "-360"
+        });
+
+        assert_eq!(
+            capture_data_str(&data, &["language_id", "languageId"]).as_deref(),
+            Some("rust")
+        );
+        assert_eq!(
+            capture_data_str(&data, &["event_id"]).as_deref(),
+            Some("abc-123")
+        );
+        assert_eq!(capture_data_i64(&data, "sequence_number"), Some(42));
+        assert_eq!(capture_data_i32(&data, "schema_version"), Some(2));
+        assert_eq!(capture_data_i32(&data, "client_tz_offset_min"), Some(-360));
     }
 
     #[test]
@@ -783,13 +920,10 @@ mod tests {
                 INSERT INTO public.events
                     (user_id, assignment_id, group_id, file_path, event_type, timestamp, data)
                 VALUES
-                    ($1, NULL, NULL, NULL, 'test_event', $2, '{"test":true}')
+                    ($1, NULL, NULL, NULL, 'test_event', $2::timestamptz, '{"test":true}'::jsonb)
                 RETURNING id
                 "#,
-                &[
-                    &test_user_id,
-                    &format!("{:?}", std::time::SystemTime::now()),
-                ],
+                &[&test_user_id, &Utc::now().to_rfc3339()],
             )
             .await?;
 
@@ -824,7 +958,7 @@ mod tests {
             match client
                 .query_one(
                     r#"
-                    SELECT user_id, assignment_id, group_id, file_path, event_type, data
+                    SELECT user_id, assignment_id, group_id, file_path, event_type, data::text
                     FROM events
                     WHERE user_id = $1 AND event_type = $2
                     ORDER BY id DESC
