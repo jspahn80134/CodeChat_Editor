@@ -143,6 +143,9 @@ const exceptionSink = EditorView.exceptionSink.of((exception) => {
     console.error(exception);
 });
 
+const TINYMCE_INST = "TinyMCE-inst";
+const CODECHAT_DOC_HIDDEN = "CodeChat-doc-hidden";
+
 // Doc blocks in CodeMirror
 // ------------------------
 //
@@ -535,14 +538,17 @@ class DocBlockWidget extends WidgetType {
     // "This is called when the an instance of the widget is removed from the
     // editor view."
     destroy(dom: HTMLElement): void {
-        // If this is the TinyMCE editor, save it.
         const [contents_div, is_tinymce] = get_contents(dom);
         // Forget about any typeset math in this node.
         window.MathJax.typesetClear([contents_div]);
+        // If this is the TinyMCE editor, save it.
         if (is_tinymce) {
             const codechat_body = document.getElementById("CodeChat-body")!;
-            const tinymce_div = document.getElementById("TinyMCE-inst")!;
+            const tinymce_div = document.getElementById(TINYMCE_INST)!;
             codechat_body.insertBefore(tinymce_div, null);
+            // Make TinyMCE invisible, since it's placed below the body of the page.
+            tinymce_div.classList.add(CODECHAT_DOC_HIDDEN);
+            tinymce.activeEditor?.setContent("");
         }
     }
 }
@@ -801,7 +807,7 @@ export const DocBlockPlugin = ViewPlugin.fromClass(
                         // Untypeset math in the old doc block and the current
                         // doc block before moving its contents around.
                         const tinymce_div =
-                            document.getElementById("TinyMCE-inst")!;
+                            document.getElementById(TINYMCE_INST)!;
                         mathJaxUnTypeset(tinymce_div);
                         mathJaxUnTypeset(contents_div);
                         // The code which moves TinyMCE into this div disturbs
@@ -835,6 +841,7 @@ export const DocBlockPlugin = ViewPlugin.fromClass(
                             contents_div.innerHTML,
                         );
                         contents_div.remove();
+                        tinymce_div.classList.remove(CODECHAT_DOC_HIDDEN);
                         // The new div is now a TinyMCE editor. Retypeset this.
                         await mathJaxTypeset(tinymce_div);
 
@@ -950,8 +957,7 @@ export const CodeMirror_load = async (
             tinymce.remove();
         }
 
-        codechat_body.innerHTML =
-            '<div class="CodeChat-CodeMirror"></div><div id="TinyMCE-inst" class="CodeChat-doc-contents" spellcheck="true"></div>';
+        codechat_body.innerHTML = `<div class="CodeChat-CodeMirror"></div><div id="${TINYMCE_INST}" class="CodeChat-doc-contents ${CODECHAT_DOC_HIDDEN}" spellcheck="true"></div>`;
         let parser;
         // TODO: dynamically load the parser.
         switch (codechat_for_web.metadata.mode) {
