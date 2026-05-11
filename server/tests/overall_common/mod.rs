@@ -253,11 +253,9 @@ macro_rules! make_test {
         async fn $test_name() -> Result<(), Box<dyn Error + Send + Sync>> {
             $crate::overall_common::harness($test_core_name, prep_test_dir!()).await
         }
-
-        // Some of the thirtyfour calls are marked as deprecated, though they
-        // aren't
     };
 }
+
 // Given an `Update` message with contents, get the version.
 pub fn get_version(msg: &EditorMessage) -> f64 {
     let ccfw = cast!(&msg.message, EditorMessageContents::Update)
