@@ -22,6 +22,11 @@ Changelog
 [Github master](https://github.com/bjones1/CodeChat_Editor)
 -----------------------------------------------------------
 
+* No changes yet.
+
+Version 0.1.54-beta1 -- 2026-May-11
+-----------------------------------
+
 * Correct Markdown conversion of the last doc block -- properly append all
   post-conversion text to it.
 * Improve browser automated testing framework.
