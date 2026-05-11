@@ -72,6 +72,7 @@ use serde::{Deserialize, Serialize};
 use std::error::Error;
 use tokio::sync::mpsc;
 use tokio_postgres::{Client, NoTls};
+use ts_rs::TS;
 
 /// Canonical event type strings. Keep these stable for analysis.
 pub mod event_types {
@@ -179,7 +180,8 @@ fn required_env_var(name: &str) -> Result<String, String> {
 
 /// Capture worker health, exposed through `/capture/status` and the VS Code
 /// status item.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export)]
 pub struct CaptureStatus {
     pub enabled: bool,
     pub state: String,
