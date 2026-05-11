@@ -164,7 +164,7 @@ pub async fn harness<
     // Send log events to the tracing subscriber, since the code currently uses
     // a log-based framework. As below, ignore re-initialization errors.
     let _ = LogTracer::init();
-    let filter = EnvFilter::new("warn")
+    let filter = EnvFilter::new("debug")
         .add_directive("html5ever=off".parse().unwrap())
         .add_directive("thirtyfour::session=off".parse().unwrap())
         .add_directive("hyper_util=off".parse().unwrap());
