@@ -593,7 +593,7 @@ async fn test_server_core(
     //
     // Click on the link for the PDF to test.
     let toc_iframe = driver.find(By::Css("#CodeChat-sidebar")).await.unwrap();
-    driver.switch_to().frame_element(&toc_iframe).await.unwrap();
+    toc_iframe.enter_frame().await.unwrap();
     let test_pdf = driver.find(By::LinkText("test.pdf")).await.unwrap();
     test_pdf.click().await.unwrap();
 
@@ -650,11 +650,7 @@ async fn test_server_core(
     // Check that the PDF viewer was sent.
     //
     // Target the iframe containing the Client.
-    driver
-        .switch_to()
-        .frame_element(&codechat_iframe)
-        .await
-        .unwrap();
+    codechat_iframe.clone().enter_frame().await.unwrap();
     let plain_content = driver.find(By::Css("#CodeChat-contents")).await.unwrap();
     assert!(
         plain_content
@@ -693,7 +689,7 @@ async fn test_client_core(
 
     // Click on the link for the PDF to test.
     let toc_iframe = driver.find(By::Css("#CodeChat-sidebar")).await.unwrap();
-    driver.switch_to().frame_element(&toc_iframe).await.unwrap();
+    toc_iframe.enter_frame().await.unwrap();
     let test_py = driver.find(By::LinkText("test.py")).await.unwrap();
     test_py.click().await.unwrap();
 
@@ -736,11 +732,7 @@ async fn test_client_core(
     sleep(Duration::from_millis(3000)).await;
 
     // Look for the test results.
-    driver
-        .switch_to()
-        .frame_element(&codechat_iframe)
-        .await
-        .unwrap();
+    codechat_iframe.clone().enter_frame().await.unwrap();
     let mocha_results = driver.find(By::Css("#mocha-stats .result")).await.unwrap();
     assert_eq!(mocha_results.inner_html().await.unwrap(), "✓");
 

@@ -51,12 +51,14 @@ use assert_fs::TempDir;
 // ### Third-party
 use dunce::canonicalize;
 use futures::FutureExt;
-use log::debug;
 use pretty_assertions::assert_eq;
 use thirtyfour::{
     By, ChromiumLikeCapabilities, DesiredCapabilities, Key, WebDriver, WebElement,
-    error::WebDriverError, start_webdriver_process,
+    error::WebDriverError,
 };
+use tracing::debug;
+use tracing_log::LogTracer;
+use tracing_subscriber::EnvFilter;
 
 // ### Local
 use code_chat_editor::{
@@ -68,7 +70,6 @@ use code_chat_editor::{
     },
 };
 use test_utils::cast;
-use tokio::time::sleep;
 
 // Utilities
 // ---------
@@ -160,12 +161,20 @@ pub async fn harness<
     // The output from calling `prep_test_dir!()`.
     prep_test_dir: (TempDir, PathBuf),
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
+    // Send log events to the tracing subscriber, since the code currently uses
+    // a log-based framework. As below, ignore re-initialization errors.
+    let _ = LogTracer::init();
+    let filter = EnvFilter::new("warn")
+        .add_directive("html5ever=off".parse().unwrap())
+        .add_directive("thirtyfour::session=off".parse().unwrap())
+        .add_directive("hyper_util=off".parse().unwrap());
+    // Construct a subscriber that prints formatted traces to stdout.
+    let subscriber = tracing_subscriber::fmt().with_env_filter(filter).finish();
+    // Use that subscriber to process traces emitted after this point. Ignore
+    // errors, since other threads may initialize this first, causing an
+    // re-initialization error.
+    let _ = tracing::subscriber::set_global_default(subscriber);
     let (temp_dir, test_dir) = prep_test_dir;
-    // The logger gets configured by (I think) `start_webdriver_process`, which
-    // delegates to `selenium-manager`. Set logging level here.
-    unsafe { env::set_var("RUST_LOG", "debug") };
-    // Start the webdriver.
-    let server_url = "http://localhost:4444";
     let mut caps = DesiredCapabilities::chrome();
     // Ensure the screen is wide enough for an 80-character line, used to word
     // wrapping test in `test_client_updates`. Otherwise, this test send the End
@@ -180,13 +189,8 @@ pub async fn harness<
         caps.add_arg("--disable-gpu")?;
         caps.add_arg("--no-sandbox")?;
     }
-    if let Err(err) = start_webdriver_process(server_url, &caps, true) {
-        // Often, the "failure" is that the webdriver is already running.
-        eprintln!("Failed to start the webdriver process: {err:#?}");
-    }
-    // Wait for the driver to start up.
-    sleep(Duration::from_millis(500)).await;
-    let driver = WebDriver::new(server_url, caps).await?;
+    // Start the webdriver.
+    let driver = WebDriver::managed(caps).await?;
     let driver_clone = driver.clone();
 
     // Run the test inside an async, so we can shut down the driver before
@@ -245,6 +249,7 @@ macro_rules! make_test {
     // The name of the test function to call inside the harness.
     ($test_name: ident, $test_core_name: ident) => {
         #[tokio::test]
+        #[tracing::instrument]
         async fn $test_name() -> Result<(), Box<dyn Error + Send + Sync>> {
             $crate::overall_common::harness($test_core_name, prep_test_dir!()).await
         }
@@ -265,6 +270,7 @@ pub fn get_version(msg: &EditorMessage) -> f64 {
 // Used in one of the common tests, but not in the other...so we get a clippy
 // lint.
 #[allow(dead_code)]
+#[tracing::instrument(skip_all)]
 pub async fn goto_line(
     codechat_server: &CodeChatEditorServer,
     driver_ref: &WebDriver,
@@ -412,11 +418,7 @@ pub async fn perform_loadfile(
 pub async fn select_codechat_iframe(driver_ref: &WebDriver) -> WebElement {
     // Target the iframe containing the Client.
     let codechat_iframe = driver_ref.find(By::Css("#CodeChat-iframe")).await.unwrap();
-    driver_ref
-        .switch_to()
-        .frame_element(&codechat_iframe)
-        .await
-        .unwrap();
+    codechat_iframe.clone().enter_frame().await.unwrap();
 
     codechat_iframe
 }
@@ -475,6 +477,7 @@ pub async fn assert_no_more_messages(codechat_server: &CodeChatEditorServer) {
 /// Wait for a message. If it matches the provided optional message, acknowledge
 /// it and update the client ID, then wait for another message. Return the most
 /// recently received message.
+#[tracing::instrument(skip_all)]
 pub async fn optional_message(
     codechat_server: &CodeChatEditorServer,
     client_id: &mut f64,

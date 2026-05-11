@@ -31,6 +31,7 @@ Changelog
 * Improve cursor tracking in a re-translation.
 * Reduce unnecessary re-translations with better HTML comparison.
 * Prevent duplicate doc blocks from appearing at the bottom of the editor.
+* Update to improved browser automation framework for testing.
 
 Version 0.1.54 -- 2026-Apr-16
 -----------------------------

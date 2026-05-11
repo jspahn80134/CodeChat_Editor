@@ -98,6 +98,9 @@ test_utils = { path = "../test_utils" }
 thiserror = "2.0.12"
 tokio = { version = "1", features = ["full"] }
 tokio-postgres = { version = "0.7", features = ["with-chrono-0_4"] }
+tracing = "0.1.44"
+tracing-log = "0.2.0"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ts-rs = "12"
 url = "2.5.2"
 urlencoding = "2"
@@ -116,7 +119,7 @@ assertables = "9"
 futures = "0.3.31"
 predicates = "3.1.2"
 pretty_assertions = "1.4.1"
-thirtyfour = { git = "https://github.com/bjones1/thirtyfour.git", branch = "selenium_manager" }
+thirtyfour = "0.37"
 tokio-tungstenite = "0.29"
 
 # #### Use local packages for development
