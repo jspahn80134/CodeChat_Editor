@@ -30,6 +30,7 @@ Changelog
 * Add the ability to create pre-releases for testing.
 * Improve cursor tracking in a re-translation.
 * Reduce unnecessary re-translations with better HTML comparison.
+* Prevent duplicate doc blocks from appearing at the bottom of the editor.
 
 Version 0.1.54 -- 2026-Apr-16
 -----------------------------
