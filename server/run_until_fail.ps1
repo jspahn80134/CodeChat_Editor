@@ -1,3 +1,4 @@
+$env:RUST_BACKTRACE=1
 $iteration = 0
 while ($true) {
     $iteration++
