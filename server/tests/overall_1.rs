@@ -131,7 +131,18 @@ async fn test_server_core(
     //
     // Update the version from the value provided by the client, which varies
     // randomly.
-    let msg = codechat_server.get_message_timeout(TIMEOUT).await.unwrap();
+    let msg = optional_message(
+        &codechat_server,
+        &mut client_id,
+        EditorMessageContents::Update(UpdateMessageContents {
+            file_path: path_str.clone(),
+            cursor_position: Some(CursorPosition::Line(1)),
+            scroll_position: None,
+            is_re_translation: false,
+            contents: None,
+        }),
+    )
+    .await;
     let client_version = get_version(&msg);
     assert_eq!(
         msg,
@@ -250,7 +261,18 @@ async fn test_server_core(
     code_line.send_keys("bar").await.unwrap();
 
     // Verify the updated text.
-    let msg = codechat_server.get_message_timeout(TIMEOUT).await.unwrap();
+    let msg = optional_message(
+        &codechat_server,
+        &mut client_id,
+        EditorMessageContents::Update(UpdateMessageContents {
+            file_path: path_str.clone(),
+            cursor_position: Some(CursorPosition::Line(1)),
+            scroll_position: None,
+            is_re_translation: false,
+            contents: None,
+        }),
+    )
+    .await;
     let client_version = get_version(&msg);
     assert_eq!(
         msg,
@@ -860,7 +882,18 @@ async fn test_client_updates_core(
     code_line.send_keys(Key::Home + "# ").await.unwrap();
     // This should edit the (new) third line of the file after word wrap: `def
     // foo():`.
-    let msg = codechat_server.get_message_timeout(TIMEOUT).await.unwrap();
+    let msg = optional_message(
+        &codechat_server,
+        &mut client_id,
+        EditorMessageContents::Update(UpdateMessageContents {
+            file_path: path_str.clone(),
+            cursor_position: Some(CursorPosition::Line(1)),
+            scroll_position: None,
+            is_re_translation: false,
+            contents: None,
+        }),
+    )
+    .await;
     let new_client_version = get_version(&msg);
     assert_eq!(
         msg,

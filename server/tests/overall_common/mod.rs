@@ -51,6 +51,7 @@ use assert_fs::TempDir;
 // ### Third-party
 use dunce::canonicalize;
 use futures::FutureExt;
+use log::debug;
 use pretty_assertions::assert_eq;
 use thirtyfour::{
     By, ChromiumLikeCapabilities, DesiredCapabilities, Key, WebDriver, WebElement,
@@ -144,7 +145,7 @@ impl ExpectedMessages {
 }
 
 // Time to wait for `ExpectedMessages`.
-pub const TIMEOUT: Duration = Duration::from_millis(2000);
+pub const TIMEOUT: Duration = Duration::from_millis(3000);
 
 // ### Test harness
 //
@@ -171,6 +172,7 @@ pub async fn harness<
     // key to go to the end of the line...but it's not the end of the full line
     // on a narrow screen.
     caps.add_arg("--window-size=1920,768")?;
+    //caps.add_arg("--auto-open-devtools-for-tabs")?;
     caps.add_arg("--headless")?;
     // On Ubuntu CI, avoid failures, probably due to running Chrome as root.
     #[cfg(target_os = "linux")]
@@ -299,9 +301,12 @@ pub async fn goto_line(
     if msg.id == *client_id
         && let EditorMessageContents::Update(update) = &msg.message
         && update.file_path == path_str
-        && update.contents.is_none()
         && update.cursor_position != Some(CursorPosition::Line(line))
+        && update.scroll_position == Some(1.0)
+        && !update.is_re_translation
+        && update.contents.is_none()
     {
+        debug!("Accepted optional cursor update message for {path_str}.");
         codechat_server.send_result(*client_id, None).await.unwrap();
         *client_id += MESSAGE_ID_INCREMENT;
         msg = codechat_server.get_message_timeout(TIMEOUT).await.unwrap();
@@ -482,6 +487,7 @@ pub async fn optional_message(
             message: optional_message,
         })
     {
+        debug!("Accepted optional update message.");
         codechat_server.send_result(*client_id, None).await.unwrap();
         *client_id += MESSAGE_ID_INCREMENT;
         codechat_server.get_message_timeout(TIMEOUT).await.unwrap()

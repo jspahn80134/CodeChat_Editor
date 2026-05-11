@@ -214,7 +214,18 @@ async fn test_5_core(
     //
     // Update the version from the value provided by the client, which varies
     // randomly.
-    let msg = codechat_server.get_message_timeout(TIMEOUT).await.unwrap();
+    let msg = optional_message(
+        &codechat_server,
+        &mut client_id,
+        EditorMessageContents::Update(UpdateMessageContents {
+            file_path: path_str.clone(),
+            cursor_position: Some(CursorPosition::Line(1)),
+            scroll_position: None,
+            is_re_translation: false,
+            contents: None,
+        }),
+    )
+    .await;
     let client_version = get_version(&msg);
     assert_eq!(
         msg,
@@ -266,8 +277,19 @@ async fn test_5_core(
     // Verify the updated text.
     //
     // Update the version from the value provided by the client, which varies
-    // randomly.
-    let msg = codechat_server.get_message_timeout(TIMEOUT).await.unwrap();
+    // randomly. There may be a cursor update preceding it.
+    let msg = optional_message(
+        &codechat_server,
+        &mut client_id,
+        EditorMessageContents::Update(UpdateMessageContents {
+            file_path: path_str.clone(),
+            cursor_position: Some(CursorPosition::Line(1)),
+            scroll_position: None,
+            is_re_translation: false,
+            contents: None,
+        }),
+    )
+    .await;
     let client_version = get_version(&msg);
     assert_eq!(
         msg,
