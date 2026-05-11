@@ -129,6 +129,11 @@ body {
     outline-width: 0px;
 }
 
+/* Used to hide the TinyMCE editor instance when it's not in use. */
+.CodeChat-doc-hidden {
+    visibility: hidden;
+}
+
 /* Combined code/doc block styling
    -------------------------------
 

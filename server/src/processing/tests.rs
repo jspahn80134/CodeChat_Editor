@@ -24,7 +24,7 @@
 use std::{io, path::PathBuf, rc::Rc, str::FromStr};
 
 // ### Third-party
-use indoc::indoc;
+use indoc::{formatdoc, indoc};
 use markup5ever_rcdom::Node;
 use predicates::prelude::predicate::str;
 use pretty_assertions::assert_eq;
@@ -42,10 +42,10 @@ use crate::{
     processing::{
         CodeDocBlockVecToSourceError, CodeMirrorDiffable, CodeMirrorDocBlockDelete,
         CodeMirrorDocBlockTransaction, CodeMirrorDocBlockUpdate, CodechatForWebToSourceError,
-        HtmlToMarkdownWrapped, SourceToCodeChatForWebError, byte_index_of,
+        HtmlToMarkdownWrapped, SourceToCodeChatForWebError, UNICODE_CURSOR_MARKER, byte_index_of,
         code_doc_block_vec_to_source, code_mirror_to_code_doc_blocks, codechat_for_web_to_source,
-        dehydrating_walk_node, diff_code_mirror_doc_blocks, diff_str, html_to_tree, hydrate_html,
-        markdown_to_html, source_to_codechat_for_web,
+        dehydrating_walk_node, diff_code_mirror_doc_blocks, diff_str, doc_block_html_to_markdown,
+        html_to_tree, hydrate_html, markdown_to_html, source_to_codechat_for_web,
     },
 };
 use test_utils::{cast, prep_test_dir, test_utils::stringit};
@@ -514,7 +514,7 @@ fn test_source_to_codechat_for_web_1() {
         ),
         Ok(TranslationResults::CodeChat(build_codechat_for_web(
             MARKDOWN_MODE,
-            &format!("<p>{lexer_spec}markdown</p>\n"),
+            &format!("<p>{lexer_spec}markdown"),
             vec![]
         )))
     );
@@ -545,7 +545,7 @@ fn test_source_to_codechat_for_web_1() {
         Ok(TranslationResults::CodeChat(build_codechat_for_web(
             "javascript",
             "\n",
-            vec![build_codemirror_doc_block(0, 1, "", "//", "<p>Test</p>\n")]
+            vec![build_codemirror_doc_block(0, 1, "", "//", "<p>Test")]
         )))
     );
     assert_eq!(
@@ -553,13 +553,7 @@ fn test_source_to_codechat_for_web_1() {
         Ok(TranslationResults::CodeChat(build_codechat_for_web(
             "javascript",
             "let a = 1;\n\n",
-            vec![build_codemirror_doc_block(
-                11,
-                12,
-                "",
-                "//",
-                "<p>Test</p>\n"
-            )]
+            vec![build_codemirror_doc_block(11, 12, "", "//", "<p>Test")]
         )))
     );
     assert_eq!(
@@ -567,7 +561,7 @@ fn test_source_to_codechat_for_web_1() {
         Ok(TranslationResults::CodeChat(build_codechat_for_web(
             "javascript",
             "\nlet a = 1;",
-            vec![build_codemirror_doc_block(0, 1, "", "//", "<p>Test</p>\n")]
+            vec![build_codemirror_doc_block(0, 1, "", "//", "<p>Test")]
         )))
     );
 
@@ -585,13 +579,7 @@ fn test_source_to_codechat_for_web_1() {
             "javascript",
             "\nlet a = 1;\n\n",
             vec![
-                build_codemirror_doc_block(
-                    0,
-                    1,
-                    "",
-                    "//",
-                    "<p><a href=\"http://b.org\">Link</a></p>\n"
-                ),
+                build_codemirror_doc_block(0, 1, "", "//", "<p><a href=http://b.org>Link</a></p>"),
                 build_codemirror_doc_block(12, 13, "", "/*", "")
             ]
         )))
@@ -620,7 +608,7 @@ fn test_source_to_codechat_for_web_1() {
             "cpp",
             "\n\n\n\n",
             vec![
-                build_codemirror_doc_block(0, 1, "", "//", "<pre><code>\n</code></pre>\n"),
+                build_codemirror_doc_block(0, 1, "", "//", "<pre><code>\n</code></pre>"),
                 build_codemirror_doc_block(2, 3, "", "//", ""),
                 build_codemirror_doc_block(4, 5, "", "//", "")
             ]
@@ -662,13 +650,7 @@ fn test_source_to_codechat_for_web_1() {
         Ok(TranslationResults::CodeChat(build_codechat_for_web(
             "cpp",
             "\n;",
-            vec![build_codemirror_doc_block(
-                0,
-                1,
-                "",
-                "//",
-                "<p>σ😄👉🏿👨‍👦🇺🇳</p>\n"
-            ),]
+            vec![build_codemirror_doc_block(0, 1, "", "//", "<p>σ😄👉🏿👨‍👦🇺🇳"),]
         )))
     );
 
@@ -691,9 +673,9 @@ fn test_source_to_codechat_for_web_1() {
                     2,
                     "",
                     "/*",
-                    "<pre><code class=\"language-foo\">\n\n</code></pre>\n"
+                    "<pre><code class=language-foo>\n\n</code></pre>"
                 ),
-                build_codemirror_doc_block(2, 3, "", "//", "<p>Test</p>\n"),
+                build_codemirror_doc_block(2, 3, "", "//", "<p>Test"),
             ]
         )))
     );
@@ -715,9 +697,9 @@ fn test_source_to_codechat_for_web_1() {
                     2,
                     "",
                     "/*",
-                    "<pre><code class=\"language-foo\">\n\n</code></pre>\n"
+                    "<pre><code class=language-foo>\n\n</code></pre>"
                 ),
-                build_codemirror_doc_block(2, 3, "", "//", "<p>Test</p>\n"),
+                build_codemirror_doc_block(2, 3, "", "//", "<p>Test"),
             ]
         )))
     );
@@ -728,8 +710,8 @@ fn test_source_to_codechat_for_web_1() {
             "cpp",
             "\n\n",
             vec![
-                build_codemirror_doc_block(0, 1, "", "//", "<pre><code>\n</code></pre>\n"),
-                build_codemirror_doc_block(1, 2, " ", "//", "<pre><code></code></pre>\n"),
+                build_codemirror_doc_block(0, 1, "", "//", "<pre><code>\n</code></pre>"),
+                build_codemirror_doc_block(1, 2, " ", "//", "<pre><code></code></pre>"),
             ]
         )))
     );
@@ -741,8 +723,8 @@ fn test_source_to_codechat_for_web_1() {
             "cpp",
             "\n\n",
             vec![
-                build_codemirror_doc_block(0, 1, "", "//", "<foo>\n"),
-                build_codemirror_doc_block(1, 2, " ", "//", "<p>Test</p>\n</foo>"),
+                build_codemirror_doc_block(0, 1, "", "//", "<foo> "),
+                build_codemirror_doc_block(1, 2, " ", "//", " <p>Test</p> </foo>"),
             ]
         )))
     );
@@ -762,7 +744,7 @@ fn test_source_to_codechat_for_web_1() {
             "\n\n",
             vec![
                 build_codemirror_doc_block(0, 1, "", "//", "<pre>\n"),
-                build_codemirror_doc_block(1, 2, " ", "//", "<p><em>Test</em></p>\n</pre>"),
+                build_codemirror_doc_block(1, 2, " ", "//", "\n<p><em>Test</em></p>\n</pre>"),
             ]
         )))
     );
@@ -1245,6 +1227,32 @@ fn test_diff_2() {
 }
 
 #[test]
+fn test_doc_block_html_to_markdown_1() {
+    assert_eq!(
+        doc_block_html_to_markdown(
+            vec![build_doc_block(
+                "",
+                "",
+                "<p>Index 0</p><p>Index 1.0<b>Index 1.1</b>012345</p>"
+            )],
+            &Some((vec![1, 2], 3)),
+        )
+        .unwrap(),
+        vec![build_doc_block(
+            "",
+            "",
+            &formatdoc!(
+                "
+                Index 0
+
+                Index 1.0**Index 1.1**012{UNICODE_CURSOR_MARKER}345
+                "
+            )
+        )]
+    );
+}
+
+#[test]
 fn test_hydrate_html_1() {
     // These tests check the translation from Markdown to "wet" HTML (what the user provides) instead of dry -> wet HTML.
     assert_eq!(
@@ -1326,7 +1334,7 @@ fn test_hydrate_html_1() {
 }
 
 fn dehydrate_html(html: &str) -> io::Result<Rc<Node>> {
-    let tree = html_to_tree(html)?;
+    let tree = html_to_tree(html, &None)?;
     dehydrating_walk_node(&tree);
     //println!("{:#?}", tree);
     Ok(tree)

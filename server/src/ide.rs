@@ -66,9 +66,9 @@ use crate::{
     processing::{CodeChatForWeb, CodeMirror, CodeMirrorDiffable, SourceFileMetadata},
     translation::{CreatedTranslationQueues, create_translation_queues},
     webserver::{
-        self, EditorMessage, EditorMessageContents, INITIAL_IDE_MESSAGE_ID, MESSAGE_ID_INCREMENT,
-        REPLY_TIMEOUT_MS, ResultErrTypes, ResultOkTypes, UpdateMessageContents, WebAppState,
-        setup_server,
+        self, CursorPosition, EditorMessage, EditorMessageContents, INITIAL_IDE_MESSAGE_ID,
+        MESSAGE_ID_INCREMENT, REPLY_TIMEOUT_MS, ResultErrTypes, ResultOkTypes,
+        UpdateMessageContents, WebAppState, setup_server,
     },
 };
 
@@ -285,7 +285,7 @@ impl CodeChatEditorServer {
     ) -> std::io::Result<f64> {
         self.send_message_timeout(EditorMessageContents::Update(UpdateMessageContents {
             file_path,
-            cursor_position,
+            cursor_position: cursor_position.map(CursorPosition::Line),
             scroll_position: scroll_position.map(|x| x as f32),
             is_re_translation: false,
             contents: option_contents.map(|contents| CodeChatForWeb {

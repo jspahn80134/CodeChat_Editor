@@ -94,7 +94,7 @@ import { Editor, EditorEvent, Events } from "tinymce";
 // ### Local
 import {
     set_is_dirty,
-    startAutosaveTimer,
+    startAutoUpdateTimer,
     saveSelection,
     restoreSelection,
 } from "./CodeChatEditor.mjs";
@@ -108,6 +108,7 @@ import {
 } from "./shared.mjs";
 import { assert } from "./assert.mjs";
 import { show_toast } from "./show_toast.mjs";
+import { CursorPosition } from "./rust-types/CursorPosition";
 
 // Globals
 // -------
@@ -141,6 +142,9 @@ const exceptionSink = EditorView.exceptionSink.of((exception) => {
     show_toast(`Error: ${exception}`);
     console.error(exception);
 });
+
+const TINYMCE_INST = "TinyMCE-inst";
+const CODECHAT_DOC_HIDDEN = "CodeChat-doc-hidden";
 
 // Doc blocks in CodeMirror
 // ------------------------
@@ -534,14 +538,17 @@ class DocBlockWidget extends WidgetType {
     // "This is called when the an instance of the widget is removed from the
     // editor view."
     destroy(dom: HTMLElement): void {
-        // If this is the TinyMCE editor, save it.
         const [contents_div, is_tinymce] = get_contents(dom);
         // Forget about any typeset math in this node.
         window.MathJax.typesetClear([contents_div]);
+        // If this is the TinyMCE editor, save it.
         if (is_tinymce) {
             const codechat_body = document.getElementById("CodeChat-body")!;
-            const tinymce_div = document.getElementById("TinyMCE-inst")!;
+            const tinymce_div = document.getElementById(TINYMCE_INST)!;
             codechat_body.insertBefore(tinymce_div, null);
+            // Make TinyMCE invisible, since it's placed below the body of the page.
+            tinymce_div.classList.add(CODECHAT_DOC_HIDDEN);
+            tinymce.activeEditor?.resetContent();
         }
     }
 }
@@ -657,8 +664,9 @@ const on_dirty = (
         // I'd like to extract this string, then untypeset only that string, not
         // the actual div. But I don't know how.
         mathJaxUnTypeset(contents_div);
+        // Use the raw format; see the implementation notes.
         const contents = is_tinymce
-            ? tinymce.activeEditor!.save()
+            ? tinymce.activeEditor!.save({ format: "raw" })
             : contents_div.innerHTML;
         await mathJaxTypeset(contents_div);
         current_view.dispatch({
@@ -780,7 +788,7 @@ export const DocBlockPlugin = ViewPlugin.fromClass(
                 const [contents_div, is_tinymce] = get_contents(target);
 
                 // Send updated cursor/scroll info.
-                startAutosaveTimer();
+                startAutoUpdateTimer();
 
                 // See if this is already a TinyMCE instance; if not, move it
                 // here.
@@ -799,7 +807,7 @@ export const DocBlockPlugin = ViewPlugin.fromClass(
                         // Untypeset math in the old doc block and the current
                         // doc block before moving its contents around.
                         const tinymce_div =
-                            document.getElementById("TinyMCE-inst")!;
+                            document.getElementById(TINYMCE_INST)!;
                         mathJaxUnTypeset(tinymce_div);
                         mathJaxUnTypeset(contents_div);
                         // The code which moves TinyMCE into this div disturbs
@@ -811,19 +819,24 @@ export const DocBlockPlugin = ViewPlugin.fromClass(
                         // would otherwise wipe the selection).
                         //
                         // Copy the current TinyMCE instance contents into a
-                        // contenteditable div.
-                        const old_contents_div = document.createElement("div");
-                        old_contents_div.className = "CodeChat-doc-contents";
-                        old_contents_div.contentEditable = "true";
-                        old_contents_div.innerHTML =
-                            tinymce.activeEditor!.getContent();
-                        tinymce_div.parentNode!.insertBefore(
-                            old_contents_div,
-                            null,
-                        );
-                        // The previous content edited by TinyMCE is now a div.
-                        // Retypeset this after the transition.
-                        await mathJaxTypeset(old_contents_div);
+                        // contenteditable div, unless the TinyMCE instance wasn't in use (currently hidden, since no previous doc block was being edited).
+                        if (
+                            !tinymce_div.classList.contains(CODECHAT_DOC_HIDDEN)
+                        ) {
+                            const old_contents_div =
+                                document.createElement("div");
+                            old_contents_div.className =
+                                "CodeChat-doc-contents";
+                            old_contents_div.innerHTML =
+                                tinymce.activeEditor!.save({ format: "raw" });
+                            tinymce_div.parentNode!.insertBefore(
+                                old_contents_div,
+                                null,
+                            );
+                            // The previous content edited by TinyMCE is now a div.
+                            // Retypeset this after the transition.
+                            await mathJaxTypeset(old_contents_div);
+                        }
                         // Move TinyMCE to the new location, then remove the old
                         // div it will replace.
                         target.insertBefore(tinymce_div, null);
@@ -832,6 +845,7 @@ export const DocBlockPlugin = ViewPlugin.fromClass(
                             contents_div.innerHTML,
                         );
                         contents_div.remove();
+                        tinymce_div.classList.remove(CODECHAT_DOC_HIDDEN);
                         // The new div is now a TinyMCE editor. Retypeset this.
                         await mathJaxTypeset(tinymce_div);
 
@@ -905,10 +919,10 @@ const autosaveExtension = EditorView.updateListener.of(
         }
         if (isChanged) {
             set_is_dirty();
-            startAutosaveTimer();
+            startAutoUpdateTimer();
         } else if (v.selectionSet) {
             // Send an update if only the selection changed.
-            startAutosaveTimer();
+            startAutoUpdateTimer();
         }
     },
 );
@@ -922,7 +936,7 @@ export const CodeMirror_load = async (
     codechat_for_web: CodeChatForWeb,
     // Additional extensions.
     extensions: Array<Extension>,
-    cursor_line?: number,
+    cursor_position?: CursorPosition,
     scroll_line?: number,
 ) => {
     if ("Plain" in codechat_for_web.source) {
@@ -947,8 +961,7 @@ export const CodeMirror_load = async (
             tinymce.remove();
         }
 
-        codechat_body.innerHTML =
-            '<div class="CodeChat-CodeMirror"></div><div id="TinyMCE-inst" class="CodeChat-doc-contents" spellcheck="true"></div>';
+        codechat_body.innerHTML = `<div class="CodeChat-CodeMirror"></div><div id="${TINYMCE_INST}" class="CodeChat-doc-contents ${CODECHAT_DOC_HIDDEN}" spellcheck="true"></div>`;
         let parser;
         // TODO: dynamically load the parser.
         switch (codechat_for_web.metadata.mode) {
@@ -1089,6 +1102,18 @@ export const CodeMirror_load = async (
                         setTimeout(() => on_dirty(target_or_false));
                     },
                 );
+
+                // Send updates on cursor movement.
+                editor.on(
+                    "SelectionChange",
+                    (
+                        _event: EditorEvent<
+                            Events.EditorEventMap["SelectionChange"]
+                        >,
+                    ) => {
+                        startAutoUpdateTimer();
+                    },
+                );
             },
         });
     } else {
@@ -1135,12 +1160,15 @@ export const CodeMirror_load = async (
             annotations: noAutosaveAnnotation.of(true),
         });
     }
-    scroll_to_line(cursor_line, scroll_line);
+    scroll_to_line(cursor_position, scroll_line);
 };
 
 // Scroll to the provided `scroll_line`; place the cursor at `cursor_line`.
-export const scroll_to_line = (cursor_line?: number, scroll_line?: number) => {
-    if (cursor_line === undefined && scroll_line === undefined) {
+export const scroll_to_line = (
+    cursor_position?: CursorPosition,
+    scroll_line?: number,
+) => {
+    if (cursor_position === undefined && scroll_line === undefined) {
         return;
     }
 
@@ -1150,13 +1178,19 @@ export const scroll_to_line = (cursor_line?: number, scroll_line?: number) => {
     const dispatch_data: TransactionSpec = {
         annotations: noAutosaveAnnotation.of(true),
     };
-    if (cursor_line !== undefined) {
+    if (cursor_position !== undefined) {
         // Translate the line numbers to a position.
-        const cursor_pos = current_view?.state.doc.line(cursor_line).from;
-        dispatch_data.selection = {
-            anchor: cursor_pos,
-            head: cursor_pos,
-        };
+        if ("Line" in cursor_position) {
+            const cursor_pos = current_view?.state.doc.line(
+                cursor_position.Line,
+            ).from;
+            dispatch_data.selection = {
+                anchor: cursor_pos,
+                head: cursor_pos,
+            };
+        } else {
+            report_error("Not supported.");
+        }
         // If a scroll position is provided, use it; otherwise, scroll the
         // cursor into the current view.
         if (scroll_line == undefined) {
@@ -1211,18 +1245,35 @@ export const set_CodeMirror_positions = (
 ) => {
     // If a doc block has focus, then the CodeMirror selection reports line 1.
     // Use the starting line number of the doc block instead.
-    let cursor_line;
     const doc_block = document.activeElement?.closest(".CodeChat-doc");
+    let cursor_position;
     if (doc_block) {
-        cursor_line = current_view.state.doc.lineAt(
-            current_view.posAtDOM(doc_block),
-        ).number;
+        const from = current_view.posAtDOM(doc_block);
+        const location = saveSelection();
+        // If there's a selection in the doc block, pass the DOM location;
+        // otherwise, pass the line where the doc block starts.
+        if (location.selection_offset === undefined) {
+            cursor_position = {
+                Line: current_view.state.doc.lineAt(from).number,
+            };
+        } else {
+            cursor_position = {
+                DomLocation: {
+                    dom_path: location.selection_path,
+                    dom_offset: location.selection_offset,
+                    from,
+                },
+            };
+        }
     } else {
-        cursor_line = current_view.state.doc.lineAt(
-            current_view.state.selection.main.from,
-        ).number;
+        // For a code block, we can simply retrieve the line number.
+        cursor_position = {
+            Line: current_view.state.doc.lineAt(
+                current_view.state.selection.main.from,
+            ).number,
+        };
     }
-    update_message_contents.cursor_position = cursor_line;
+    update_message_contents.cursor_position = cursor_position;
 
     // `current_view.viewport.from` isn't accurate, since it's not really the
     // top line, but a margin before it; see the

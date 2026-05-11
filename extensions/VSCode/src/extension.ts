@@ -40,7 +40,7 @@ import { CodeChatEditorServer, initServer } from "./index.js";
 
 // ### Local packages
 import {
-    autosave_timeout_ms,
+    auto_update_timeout_ms,
     CaptureEventWire,
     CaptureStatus,
     EditorMessage,
@@ -1093,19 +1093,29 @@ export const activate = (context: vscode.ExtensionContext) => {
                                 );
                             }
 
-                            const cursor_line = current_update.cursor_position;
-                            if (cursor_line !== undefined && editor) {
+                            const cursor_position =
+                                current_update.cursor_position;
+                            if (
+                                cursor_position !== undefined &&
+                                typeof cursor_position === "object" &&
+                                "Line" in cursor_position &&
+                                editor
+                            ) {
+                                const cursor_line = (
+                                    cursor_position as { Line: number }
+                                ).Line;
                                 ignore_selection_change = true;
-                                const cursor_position = new vscode.Position(
-                                    // The VSCode line is zero-based; the
-                                    // CodeMirror line is one-based.
-                                    cursor_line - 1,
-                                    0,
-                                );
+                                const vscode_cursor_position =
+                                    new vscode.Position(
+                                        // The VSCode line is zero-based; the
+                                        // CodeMirror line is one-based.
+                                        cursor_line - 1,
+                                        0,
+                                    );
                                 editor.selections = [
                                     new vscode.Selection(
-                                        cursor_position,
-                                        cursor_position,
+                                        vscode_cursor_position,
+                                        vscode_cursor_position,
                                     ),
                                 ];
                                 // I'd prefer to set `ignore_selection_change =
@@ -1399,7 +1409,7 @@ const send_update = (this_is_dirty: boolean) => {
                     scroll_position,
                 );
             }
-        }, autosave_timeout_ms);
+        }, auto_update_timeout_ms);
     }
 };
 

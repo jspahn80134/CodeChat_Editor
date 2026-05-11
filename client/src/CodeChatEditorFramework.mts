@@ -47,6 +47,7 @@ import {
     on_dom_content_loaded,
 } from "./CodeChatEditor.mjs";
 import { ResultErrTypes } from "./rust-types/ResultErrTypes.js";
+import { CursorPosition } from "./rust-types/CursorPosition.js";
 
 // Websocket
 // ---------
@@ -262,7 +263,7 @@ class WebSocketComm {
                         // If the page is still loading, then don't save.
                         // Otherwise, save the editor contents if necessary.
                         const cce = get_client();
-                        await cce?.on_save(true);
+                        await cce?.send_update(true);
                         // Now, it's safe to load a new file. Tell the client to
                         // allow this navigation -- the document it contains has
                         // already been saved.
@@ -427,7 +428,7 @@ const get_client = () => root_iframe?.contentWindow?.CodeChatEditor;
 const set_content = async (
     contents: CodeChatForWeb,
     is_re_translation: boolean,
-    cursor_line?: number,
+    cursor_position?: CursorPosition,
     scroll_line?: number,
 ) => {
     const client = get_client();
@@ -448,7 +449,7 @@ const set_content = async (
         await root_iframe!.contentWindow!.CodeChatEditor.open_lp(
             contents,
             is_re_translation,
-            cursor_line,
+            cursor_position,
             scroll_line,
         );
     }

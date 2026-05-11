@@ -22,7 +22,21 @@ Changelog
 [Github master](https://github.com/bjones1/CodeChat_Editor)
 -----------------------------------------------------------
 
-* No changes.
+* No changes yet.
+
+Version 0.1.54-beta1 -- 2026-May-11
+-----------------------------------
+
+* Correct Markdown conversion of the last doc block -- properly append all
+  post-conversion text to it.
+* Improve browser automated testing framework.
+* Add the ability for the IDE cursor to follow the line when the Client cursor
+  is in a doc block.
+* Add the ability to create pre-releases for testing.
+* Improve cursor tracking in a re-translation.
+* Reduce unnecessary re-translations with better HTML comparison.
+* Prevent duplicate doc blocks from appearing at the bottom of the editor.
+* Update to improved browser automation framework for testing.
 
 Version 0.1.54 -- 2026-Apr-16
 -----------------------------

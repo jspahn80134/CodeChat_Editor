@@ -38,20 +38,35 @@
 // -------
 //
 // ### Standard library
-use std::{collections::HashMap, error::Error, path::Path, time::Duration};
+use std::{
+    collections::HashMap,
+    env,
+    error::Error,
+    panic::AssertUnwindSafe,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
+use assert_fs::TempDir;
 // ### Third-party
 use dunce::canonicalize;
+use futures::FutureExt;
 use pretty_assertions::assert_eq;
-use thirtyfour::{By, Key, WebDriver, WebElement};
+use thirtyfour::{
+    By, ChromiumLikeCapabilities, DesiredCapabilities, Key, WebDriver, WebElement,
+    error::WebDriverError,
+};
+use tracing::debug;
+use tracing_log::LogTracer;
+use tracing_subscriber::EnvFilter;
 
 // ### Local
 use code_chat_editor::{
     ide::CodeChatEditorServer,
     processing::{CodeChatForWeb, CodeMirrorDiff, CodeMirrorDiffable, SourceFileMetadata},
     webserver::{
-        EditorMessage, EditorMessageContents, MESSAGE_ID_INCREMENT, ResultOkTypes,
-        UpdateMessageContents,
+        CursorPosition, EditorMessage, EditorMessageContents, MESSAGE_ID_INCREMENT, ResultOkTypes,
+        UpdateMessageContents, set_root_path,
     },
 };
 use test_utils::cast;
@@ -69,7 +84,14 @@ impl ExpectedMessages {
         ExpectedMessages(HashMap::new())
     }
 
-    pub fn insert(&mut self, editor_message: EditorMessage, is_dynamic: bool) {
+    pub fn insert(
+        &mut self,
+        editor_message: EditorMessage,
+        // For this message, copy the version from the received
+        // EditorMessage.contents.version to the same field in the message to
+        // check against.
+        is_dynamic: bool,
+    ) {
         assert!(
             self.0
                 .insert(
@@ -137,136 +159,109 @@ pub(crate) static WEB_DRIVER_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mu
 // A test harness. It runs the webdriver, the Server, opens the Client, then
 // runs provided tests. After testing finishes, it cleans up (handling panics
 // properly).
-//
-// The goal was to pass the harness a function which runs the tests. This
-// currently doesn't work, due to problems with lifetimes (see comments). So,
-// implement this as a macro instead (kludge!).
-#[macro_export]
-macro_rules! harness {
-    // The name of the test function to call inside the harness.
-    ($func: ident) => {
-        pub async fn harness<
-            'a,
-            F: FnOnce(CodeChatEditorServer, &'a WebDriver, &'a Path) -> Fut,
-            Fut: Future<Output = Result<(), WebDriverError>>,
-        >(
-            // The function which performs tests using thirtyfour. TODO: not
-            // used.
-            _f: F,
-            // The output from calling `prep_test_dir!()`.
-            prep_test_dir: (TempDir, PathBuf),
-        ) -> Result<(), Box<dyn Error + Send + Sync>> {
-            let _webdriver_test_lock = $crate::overall_common::WEB_DRIVER_TEST_LOCK.lock().await;
-            let (temp_dir, test_dir) = prep_test_dir;
-            // The logger gets configured by (I think)
-            // `start_webdriver_process`, which delegates to `selenium-manager`.
-            // Set logging level here.
-            unsafe { env::set_var("RUST_LOG", "debug") };
-            // Start the webdriver.
-            let server_url = "http://localhost:4444";
-            let mut caps = DesiredCapabilities::chrome();
-            // Ensure the screen is wide enough for an 80-character line, used
-            // to word wrapping test in `test_client_updates`. Otherwise, this
-            // test send the End key to go to the end of the line...but it's not
-            // the end of the full line on a narrow screen.
-            caps.add_arg("--window-size=1920,768")?;
-            caps.add_arg("--headless")?;
-            // On Ubuntu CI, avoid failures, probably due to running Chrome as
-            // root.
-            #[cfg(target_os = "linux")]
-            if env::var("CI") == Ok("true".to_string()) {
-                caps.add_arg("--disable-gpu")?;
-                caps.add_arg("--no-sandbox")?;
+pub async fn harness<
+    F: FnOnce(CodeChatEditorServer, WebDriver, PathBuf) -> Fut,
+    Fut: Future<Output = Result<(), WebDriverError>>,
+>(
+    f: F,
+    // The output from calling `prep_test_dir!()`.
+    prep_test_dir: (TempDir, PathBuf),
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let _webdriver_test_lock = WEB_DRIVER_TEST_LOCK.lock().await;
+    // Send log events to the tracing subscriber, since the code currently uses
+    // a log-based framework. As below, ignore re-initialization errors.
+    let _ = LogTracer::init();
+    let filter = EnvFilter::new("debug")
+        .add_directive("html5ever=off".parse().unwrap())
+        .add_directive("thirtyfour::session=off".parse().unwrap())
+        .add_directive("hyper_util=off".parse().unwrap());
+    // Construct a subscriber that prints formatted traces to stdout.
+    let subscriber = tracing_subscriber::fmt().with_env_filter(filter).finish();
+    // Use that subscriber to process traces emitted after this point. Ignore
+    // errors, since other threads may initialize this first, causing an
+    // re-initialization error.
+    let _ = tracing::subscriber::set_global_default(subscriber);
+    let (temp_dir, test_dir) = prep_test_dir;
+    let mut caps = DesiredCapabilities::chrome();
+    // Ensure the screen is wide enough for an 80-character line, used to word
+    // wrapping test in `test_client_updates`. Otherwise, this test send the End
+    // key to go to the end of the line...but it's not the end of the full line
+    // on a narrow screen.
+    caps.add_arg("--window-size=1920,768")?;
+    //caps.add_arg("--auto-open-devtools-for-tabs")?;
+    caps.add_arg("--headless")?;
+    // On Ubuntu CI, avoid failures, probably due to running Chrome as root.
+    #[cfg(target_os = "linux")]
+    if env::var("CI") == Ok("true".to_string()) {
+        caps.add_arg("--disable-gpu")?;
+        caps.add_arg("--no-sandbox")?;
+    }
+    // Start the webdriver.
+    let driver = WebDriver::managed(caps).await?;
+    let driver_clone = driver.clone();
+
+    // Run the test inside an async, so we can shut down the driver before
+    // returning an error. Mark the function as unwind safe. though I'm not
+    // certain this is correct. Hopefully, it's good enough for testing.
+    let ret = AssertUnwindSafe(async move {
+        // ### Setup
+        let p = env::current_exe().unwrap().parent().unwrap().join("../..");
+        set_root_path(Some(&p)).unwrap();
+        let codechat_server = CodeChatEditorServer::new().unwrap();
+
+        // Get the resulting web page text.
+        let opened_id = codechat_server.send_message_opened(true).await.unwrap();
+        assert_eq!(
+            codechat_server.get_message_timeout(TIMEOUT).await.unwrap(),
+            EditorMessage {
+                id: opened_id,
+                message: EditorMessageContents::Result(Ok(ResultOkTypes::Void))
             }
-            if let Err(err) = start_webdriver_process(server_url, &caps, true) {
-                // Often, the "failure" is that the webdriver is already
-                // running.
-                eprintln!("Failed to start the webdriver process: {err:#?}");
-            }
-            // Wait for the driver to start up.
-            sleep(Duration::from_millis(500)).await;
-            let driver = WebDriver::new(server_url, caps).await?;
-            let driver_clone = driver.clone();
-            let driver_ref = &driver_clone;
+        );
+        let em_html = codechat_server.get_message_timeout(TIMEOUT).await.unwrap();
+        codechat_server.send_result(em_html.id, None).await.unwrap();
 
-            // Run the test inside an async, so we can shut down the driver
-            // before returning an error. Mark the function as unwind safe.
-            // though I'm not certain this is correct. Hopefully, it's good
-            // enough for testing.
-            let ret = AssertUnwindSafe(async move {
-                // ### Setup
-                let p = env::current_exe().unwrap().parent().unwrap().join("../..");
-                set_root_path(Some(&p)).unwrap();
-                let codechat_server = CodeChatEditorServer::new().unwrap();
+        // Parse out the address to use.
+        let client_html = cast!(&em_html.message, EditorMessageContents::ClientHtml);
+        let find_str = "<iframe src=\"";
+        let address_start = client_html.find(find_str).unwrap() + find_str.len();
+        let address_end = client_html[address_start..].find("\"").unwrap() + address_start;
+        let address = &client_html[address_start..address_end];
 
-                // Get the resulting web page text.
-                let opened_id = codechat_server.send_message_opened(true).await.unwrap();
-                pretty_assertions::assert_eq!(
-                    codechat_server.get_message_timeout(TIMEOUT).await.unwrap(),
-                    EditorMessage {
-                        id: opened_id,
-                        message: EditorMessageContents::Result(Ok(ResultOkTypes::Void))
-                    }
-                );
-                let em_html = codechat_server.get_message_timeout(TIMEOUT).await.unwrap();
-                codechat_server.send_result(em_html.id, None).await.unwrap();
+        // Open the Client and send it a file to load.
+        driver_clone.goto(address).await.unwrap();
+        f(codechat_server, driver_clone, test_dir).await?;
 
-                // Parse out the address to use.
-                let client_html = cast!(&em_html.message, EditorMessageContents::ClientHtml);
-                let find_str = "<iframe src=\"";
-                let address_start = client_html.find(find_str).unwrap() + find_str.len();
-                let address_end = client_html[address_start..].find("\"").unwrap() + address_start;
-                let address = &client_html[address_start..address_end];
+        Ok(())
+    })
+    // Catch any panics/assertions, again to ensure the driver shuts down
+    // cleanly.
+    .catch_unwind()
+    .await;
 
-                // Open the Client and send it a file to load.
-                driver_ref.goto(address).await.unwrap();
-                // I'd like to call `f` here, but can't: Rust reports that
-                // `driver_clone` doesn't live long enough. I don't know how to
-                // fix this lifetime issue -- I want to specify that `f`'s
-                // lifetime (which contains the state referring to
-                // `driver_clone`) ends after the call to `f`, but don't know
-                // how.
-                $func(codechat_server, driver_ref, &test_dir).await?;
+    // Always explicitly close the browser.
+    driver.quit().await?;
+    // Report any errors produced when removing the temporary directory.
+    temp_dir.close()?;
 
-                Ok(())
-            })
-            // Catch any panics/assertions, again to ensure the driver shuts
-            // down cleanly.
-            .catch_unwind()
-            .await;
-
-            // Always explicitly close the browser.
-            driver.quit().await?;
-            // Report any errors produced when removing the temporary directory.
-            temp_dir.close()?;
-
-            ret.unwrap_or_else(|err|
-                    // Convert a panic to an error.
-                    Err::<(), Box<dyn Error + Send + Sync>>(Box::from(format!(
-                        "{err:#?}"
-                    ))))
-        }
-    };
+    ret.unwrap_or_else(
+        // Convert a panic to an error.
+        |err| Err::<(), Box<dyn Error + Send + Sync>>(Box::from(format!("{err:#?}"))),
+    )
 }
 
 #[macro_export]
 macro_rules! make_test {
     // The name of the test function to call inside the harness.
     ($test_name: ident, $test_core_name: ident) => {
-        mod $test_name {
-            use super::*;
-            $crate::harness!($test_core_name);
-        }
-
         #[tokio::test]
+        #[tracing::instrument]
         async fn $test_name() -> Result<(), Box<dyn Error + Send + Sync>> {
-            $test_name::harness($test_core_name, prep_test_dir!()).await
+            $crate::overall_common::harness($test_core_name, prep_test_dir!()).await
         }
-
-        // Some of the thirtyfour calls are marked as deprecated, though they
-        // aren't
     };
 }
+
 // Given an `Update` message with contents, get the version.
 pub fn get_version(msg: &EditorMessage) -> f64 {
     let ccfw = cast!(&msg.message, EditorMessageContents::Update)
@@ -279,6 +274,7 @@ pub fn get_version(msg: &EditorMessage) -> f64 {
 // Used in one of the common tests, but not in the other...so we get a clippy
 // lint.
 #[allow(dead_code)]
+#[tracing::instrument(skip_all)]
 pub async fn goto_line(
     codechat_server: &CodeChatEditorServer,
     driver_ref: &WebDriver,
@@ -309,14 +305,19 @@ pub async fn goto_line(
         .await
         .unwrap();
     // The cursor movement produces a cursor/scroll position update after an
-    // autosave delay. Sometimes, we get an update just before the movement; ignore that.
+    // autosave delay. Sometimes, we get an update just before the movement;
+    // ignore that.
     let mut msg = codechat_server.get_message_timeout(TIMEOUT).await.unwrap();
     if msg.id == *client_id
         && let EditorMessageContents::Update(update) = &msg.message
         && update.file_path == path_str
+        && update.cursor_position != Some(CursorPosition::Line(line))
+        && update.scroll_position == Some(1.0)
+        && !update.is_re_translation
         && update.contents.is_none()
-        && update.cursor_position != Some(line)
     {
+        debug!("Accepted optional cursor update message for {path_str}.");
+        codechat_server.send_result(*client_id, None).await.unwrap();
         *client_id += MESSAGE_ID_INCREMENT;
         msg = codechat_server.get_message_timeout(TIMEOUT).await.unwrap();
     }
@@ -326,7 +327,7 @@ pub async fn goto_line(
             id: *client_id,
             message: EditorMessageContents::Update(UpdateMessageContents {
                 file_path: path_str.to_string(),
-                cursor_position: Some(line),
+                cursor_position: Some(CursorPosition::Line(line)),
                 scroll_position: Some(1.0),
                 is_re_translation: false,
                 contents: None,
@@ -421,11 +422,7 @@ pub async fn perform_loadfile(
 pub async fn select_codechat_iframe(driver_ref: &WebDriver) -> WebElement {
     // Target the iframe containing the Client.
     let codechat_iframe = driver_ref.find(By::Css("#CodeChat-iframe")).await.unwrap();
-    driver_ref
-        .switch_to()
-        .frame_element(&codechat_iframe)
-        .await
-        .unwrap();
+    codechat_iframe.clone().enter_frame().await.unwrap();
 
     codechat_iframe
 }
@@ -439,7 +436,7 @@ pub async fn get_empty_client_update(
     client_id: &mut f64,
     client_version: &mut f64,
     mode: &str,
-    cursor_position: Option<u32>,
+    cursor_position: Option<CursorPosition>,
     scroll_position: Option<f32>,
 ) {
     let msg = codechat_server.get_message_timeout(TIMEOUT).await.unwrap();
@@ -478,5 +475,30 @@ pub async fn assert_no_more_messages(codechat_server: &CodeChatEditorServer) {
         .await
     {
         panic!("Unprocessed messages: {:#?}", msg);
+    }
+}
+
+/// Wait for a message. If it matches the provided optional message, acknowledge
+/// it and update the client ID, then wait for another message. Return the most
+/// recently received message.
+#[tracing::instrument(skip_all)]
+pub async fn optional_message(
+    codechat_server: &CodeChatEditorServer,
+    client_id: &mut f64,
+    optional_message: EditorMessageContents,
+) -> EditorMessage {
+    let msg = codechat_server.get_message_timeout(TIMEOUT).await.unwrap();
+    if msg
+        == (EditorMessage {
+            id: *client_id,
+            message: optional_message,
+        })
+    {
+        debug!("Accepted optional update message.");
+        codechat_server.send_result(*client_id, None).await.unwrap();
+        *client_id += MESSAGE_ID_INCREMENT;
+        codechat_server.get_message_timeout(TIMEOUT).await.unwrap()
+    } else {
+        msg
     }
 }

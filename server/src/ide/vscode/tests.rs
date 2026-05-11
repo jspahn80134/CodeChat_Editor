@@ -47,9 +47,12 @@ use tokio_tungstenite::{
     tungstenite::{http::StatusCode, protocol::Message},
 };
 
-use crate::webserver::{
-    EditorMessage, EditorMessageContents, INITIAL_CLIENT_MESSAGE_ID, INITIAL_IDE_MESSAGE_ID,
-    INITIAL_MESSAGE_ID, IdeType, MESSAGE_ID_INCREMENT, ResultErrTypes,
+use crate::{
+    processing::CodeMirrorDocBlockUpdate,
+    webserver::{
+        EditorMessage, EditorMessageContents, INITIAL_CLIENT_MESSAGE_ID, INITIAL_IDE_MESSAGE_ID,
+        INITIAL_MESSAGE_ID, IdeType, MESSAGE_ID_INCREMENT, ResultErrTypes,
+    },
 };
 use crate::{
     processing::{
@@ -557,7 +560,7 @@ async fn test_vscode_ide_websocket8() {
                             to: 1,
                             indent: "".to_string(),
                             delimiter: "#".to_string(),
-                            contents: "<p>testing</p>\n".to_string()
+                            contents: "<p>testing".to_string()
                         }],
                     }),
                     version: 0.0,
@@ -689,7 +692,7 @@ async fn test_vscode_ide_websocket7() {
                             to: 1,
                             indent: "".to_string(),
                             delimiter: "#".to_string(),
-                            contents: "<p>more</p>\n".to_string()
+                            contents: "<p>more".to_string()
                         }]
                     }),
                     version: 0.0,
@@ -764,13 +767,27 @@ async fn test_vscode_ide_websocket7() {
                             to: None,
                             insert: "code\n\n".to_string()
                         }],
-                        doc_blocks: vec![CodeMirrorDocBlockTransaction::Add(CodeMirrorDocBlock {
-                            from: 6,
-                            to: 7,
-                            indent: "".to_string(),
-                            delimiter: "#".to_string(),
-                            contents: "<p>most</p>\n".to_string()
-                        })],
+                        doc_blocks: vec![
+                            CodeMirrorDocBlockTransaction::Update(CodeMirrorDocBlockUpdate {
+                                from: 0,
+                                from_new: None,
+                                to: None,
+                                indent: None,
+                                delimiter: None,
+                                contents: vec![StringDiff {
+                                    from: 0,
+                                    to: Some(7,),
+                                    insert: "<p>more</p>".to_string(),
+                                },],
+                            }),
+                            CodeMirrorDocBlockTransaction::Add(CodeMirrorDocBlock {
+                                from: 6,
+                                to: 7,
+                                indent: "".to_string(),
+                                delimiter: "#".to_string(),
+                                contents: "<p>most".to_string(),
+                            },),
+                        ],
                         version: 0.0,
                     }),
                     version: 1.0,
@@ -996,7 +1013,7 @@ async fn test_vscode_ide_websocket4() {
                             to: 1,
                             indent: "".to_string(),
                             delimiter: "#".to_string(),
-                            contents: "<p>test.py</p>\n".to_string()
+                            contents: "<p>test.py".to_string()
                         }],
                     }),
                     version: cast!(&msg.message, EditorMessageContents::Update)

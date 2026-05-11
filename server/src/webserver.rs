@@ -351,10 +351,10 @@ pub struct UpdateMessageContents {
     /// transition times when the IDE and Client have different files loaded,
     /// guaranteeing to updates are still applied to the correct file.
     pub file_path: String,
-    /// The line in the file where the cursor is located. TODO: Selections are
-    /// not yet supported.
+    /// The line in the file where the cursor is located or the DOM location of
+    /// the cursor. TODO: Selections are not yet supported.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub cursor_position: Option<u32>,
+    pub cursor_position: Option<CursorPosition>,
     /// The line at the top of the screen.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scroll_position: Option<f32>,
@@ -366,6 +366,30 @@ pub struct UpdateMessageContents {
     /// The contents of this file.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub contents: Option<CodeChatForWeb>,
+}
+
+/// Store the location of the cursor (the selection, assuming it's a zero-length
+/// selection, i.e. a standard cursor).
+#[derive(Debug, Serialize, Deserialize, PartialEq, TS)]
+#[ts(export)]
+pub enum CursorPosition {
+    /// The line the cursor is on.
+    Line(u32),
+    /// The exact location of the cursor in the HTML DOM. Only the Client and
+    /// the Server may use this in messages to each other. The IDE will not
+    /// receive a message with this variant and must not generate a message with
+    /// this variant.
+    DomLocation {
+        /// The `from` location (character offset) of the doc block the cursor
+        /// is in.
+        from: usize,
+        /// The index of each successive node in the DOM of the current
+        /// selection (cursor location).
+        dom_path: Vec<usize>,
+        /// The offset within the last node (which must be a text node) of the
+        /// current selection (cursor location).
+        dom_offset: usize,
+    },
 }
 
 /// ### Data structures used by the webserver
@@ -1632,7 +1656,7 @@ async fn basic_validator(
     if let Some(app_state) = &req.app_data::<WebAppState>()
         && let Some(expected_credentials) = app_state.credentials.as_ref()
         && credentials.user_id() == expected_credentials.username
-        && credentials.password() == Some(&expected_credentials.password)
+        && credentials.password() == Some(expected_credentials.password.as_str())
     {
         Ok(req)
     } else {

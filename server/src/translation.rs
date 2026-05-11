@@ -206,8 +206,9 @@
 // -------
 //
 // ### Standard library
-use std::{collections::HashMap, ffi::OsStr, fmt::Debug, path::PathBuf};
+use std::{collections::HashMap, ffi::OsStr, fmt::Debug, path::PathBuf, rc::Rc};
 
+use htmd::Node;
 // ### Third-party
 use lazy_static::lazy_static;
 use log::{debug, error, warn};
@@ -222,16 +223,17 @@ use tokio::{
 // ### Local
 use crate::{
     capture::event_types,
-    lexer::supported_languages::MARKDOWN_MODE,
+    lexer::{CodeDocBlock, DocBlock, supported_languages::MARKDOWN_MODE},
     processing::{
         CodeChatForWeb, CodeMirror, CodeMirrorDiff, CodeMirrorDiffable, CodeMirrorDocBlock,
-        CodeMirrorDocBlockVec, SourceFileMetadata, TranslationResultsString,
-        codechat_for_web_to_source, diff_code_mirror_doc_blocks, diff_str,
-        source_to_codechat_for_web_string, transform_html,
+        CodeMirrorDocBlockVec, SourceFileMetadata, TranslationResultsString, UNICODE_CURSOR_MARKER,
+        byte_index_of, codechat_for_web_to_source, diff_code_mirror_doc_blocks, diff_str,
+        doc_block_html_to_markdown, minify, remove_tinymce_data, source_to_codechat_for_web_string,
+        transform_html,
     },
     queue_send, queue_send_func,
     webserver::{
-        CaptureEventWire, EditorMessage, EditorMessageContents, INITIAL_MESSAGE_ID,
+        CaptureEventWire, CursorPosition, EditorMessage, EditorMessageContents, INITIAL_MESSAGE_ID,
         MESSAGE_ID_INCREMENT, ProcessingTaskHttpRequest, ProcessingTaskHttpRequestFlags,
         ResultErrTypes, ResultOkTypes, SimpleHttpResponse, SimpleHttpResponseError,
         UpdateMessageContents, WebAppState, WebsocketQueues, file_to_response, log_capture_event,
@@ -881,7 +883,7 @@ impl TranslationTask {
         }
 
         let doc_blocks_changed = match before_doc_blocks {
-            Some(before) => !doc_block_compare(before, &after.doc_blocks),
+            Some(before) => !doc_blocks_compare(before, &after.doc_blocks),
             None => !after.doc_blocks.is_empty(),
         };
         if doc_blocks_changed {
@@ -1289,8 +1291,7 @@ impl TranslationTask {
                             let mut cfw_version = cfw.version;
 
                             // Translate back to the Client to see if there are
-                            // any changes after this conversion. Only check
-                            // CodeChat documents, not Markdown docs.
+                            // any changes after this conversion.
                             if let Ok(ccfws) = source_to_codechat_for_web_string(
                                 &new_source_code,
                                 &clean_file_path,
@@ -1335,7 +1336,7 @@ impl TranslationTask {
                                     ))
                                     || (!is_markdown_mode
                                         && (code_mirror_translated.doc != self.code_mirror_doc
-                                            || !doc_block_compare(
+                                            || !doc_blocks_compare(
                                                 &code_mirror_translated.doc_blocks,
                                                 self.code_mirror_doc_blocks.as_ref().unwrap(),
                                             )))
@@ -1416,12 +1417,115 @@ impl TranslationTask {
                         }
                     },
                 };
+
+                // Translate the cursor position from `DomLocation` (the
+                // Client's DOM-based coordinate) to `Line` (the IDE's
+                // line-number coordinate) before forwarding to the IDE, which
+                // only understands line numbers.
+                let cursor_position = if let Some(CursorPosition::DomLocation {
+                    from,
+                    dom_path,
+                    dom_offset,
+                }) = update_message_contents.cursor_position
+                {
+                    // Use a closure to allow early returns on error (returning
+                    // `None` so the IDE receives no cursor position).
+                    (|| {
+                        // Detect Markdown mode: Markdown documents store all
+                        // HTML in `code_mirror_doc` with an empty doc-blocks
+                        // list; CodeChat documents have non-empty doc blocks.
+                        // We can't rely on the lexer name in
+                        // `CodeChatForWeb::SourceFileMetaData`, since the
+                        // message `contents` may be None. This won't confuse a
+                        // CodeChat document with no doc blocks, since the
+                        // Client won't send a `DomLocation` in this case.
+                        let is_markdown = self
+                            .code_mirror_doc_blocks
+                            .as_ref()
+                            .is_none_or(|v| v.is_empty());
+
+                        // 1. Find the HTML (for a Markdown document) or the doc
+                        //    block the cursor is in. Create a temporary
+                        //    one-element `Vec<CodeDocBlock>` from this
+                        //    containing only the relevant doc block.
+                        let (preceding_newlines, doc_block) = if is_markdown {
+                            // 1. For Markdown, there are zero preceding
+                            //    newlines and the relevant HTML is in
+                            //    `self.code_mirror_doc`.
+                            (
+                                0,
+                                DocBlock {
+                                    indent: String::new(),
+                                    delimiter: String::new(),
+                                    contents: self.code_mirror_doc.clone(),
+                                    lines: 0,
+                                },
+                            )
+                        } else {
+                            // 1. Locate the relevant doc block, identified by
+                            //    its starting offset matching `from`. If not
+                            //    found, abort and return `None`.
+                            let blocks = self.code_mirror_doc_blocks.as_ref().unwrap();
+                            let block = blocks.iter().find(|b| b.from == from)?;
+
+                            // 2. Count all newlines in `self.code_mirror_doc`
+                            //    which precede `from`. `from` is in UTF-16 code
+                            //    units; convert to a byte index first.
+                            let byte_idx = byte_index_of(&self.code_mirror_doc, from);
+                            let preceding_newlines = self.code_mirror_doc[..byte_idx]
+                                .chars()
+                                .filter(|&c| c == '\n')
+                                .count();
+
+                            (
+                                preceding_newlines,
+                                DocBlock {
+                                    indent: block.indent.clone(),
+                                    delimiter: block.delimiter.clone(),
+                                    contents: block.contents.clone(),
+                                    lines: 0,
+                                },
+                            )
+                        };
+
+                        // 2. Insert a `UNICODE_CURSOR_MARKER` at the cursor
+                        //    location specified by `dom_offsets`, then convert
+                        //    the HTML to Markdown.
+                        let translated = doc_block_html_to_markdown(
+                            vec![CodeDocBlock::DocBlock(doc_block)],
+                            &Some((dom_path, dom_offset)),
+                        )
+                        .ok()?;
+                        let CodeDocBlock::DocBlock(db) = &translated[0] else {
+                            return None;
+                        };
+
+                        // 3. Count newlines before the marker and add them to
+                        //    the preceding-newlines total for the final line
+                        //    number. If the marker is absent, treat its
+                        //    position as 0 (contributing zero newlines), even
+                        //    if an existing marker precedes the inserted one.
+                        let marker_byte = db.contents.find(UNICODE_CURSOR_MARKER).unwrap_or(0);
+                        let newlines_before_marker = db.contents[..marker_byte]
+                            .chars()
+                            .filter(|&c| c == '\n')
+                            .count();
+
+                        // CodeMirror uses 1-based line numbers.
+                        Some(CursorPosition::Line(
+                            (preceding_newlines + newlines_before_marker + 1) as u32,
+                        ))
+                    })()
+                } else {
+                    update_message_contents.cursor_position
+                };
+
                 debug!("Sending update id = {}", client_message.id);
                 queue_send_func!(self.to_ide_tx.send(EditorMessage {
                     id: client_message.id,
                     message: EditorMessageContents::Update(UpdateMessageContents {
                         file_path: clean_file_path.to_str().expect("Since the path started as a string, assume it losslessly translates back to a string.").to_string(),
-                        cursor_position: update_message_contents.cursor_position,
+                        cursor_position,
                         scroll_position: update_message_contents.scroll_position,
                         is_re_translation: false,
                         contents: codechat_for_web,
@@ -1446,6 +1550,18 @@ fn eol_convert(s: String, eol_type: &EolType) -> String {
     }
 }
 
+fn compare_html_walker(node: &Rc<Node>) {
+    let mut index = 0;
+    while index < node.children.borrow().len() {
+        if let Some(child) = remove_tinymce_data(node, index) {
+            compare_html_walker(&child);
+            index += 1;
+        }
+        // If remove\_tinymce\_data returned None, the node was removed with no
+        // replacement; the next child is now at the same index.
+    }
+}
+
 // TinyMCE replaces newlines inside paragraphs with a space and (I think) avoids
 // surrogate pairs by breaking them into a series of UTF-16 characters.
 // Therefore, to compare HTML, normalize HTML touched by TinyMCE first.
@@ -1456,35 +1572,31 @@ fn compare_html(
     // processing by TinyMCE.
     raw_html: &str,
 ) -> bool {
-    // The normalized HTML is word-wrapped, while the raw HTML is not. Use this
-    // to ignore the differences between newlines and spaces, in order to ignore
-    // these differences.
-    fn map_newlines_to_spaces<'a>(
-        s: &'a str,
-    ) -> std::iter::Map<std::str::Chars<'a>, impl FnMut(char) -> char> {
-        s.trim()
-            .chars()
-            .map(|c: char| if c == '\n' { ' ' } else { c })
-    }
+    // Remove TinyMCE temp data before comparison; this also normalizes the
+    // characters via html5ever. Order here in very important: the
+    // `source_to_codechat_for_web()` function transforms, then minifies, since
+    // both transform and minify tend to rearrange attributes in their own
+    // preferred order. Use the same order to make comparisons work.
+    if let Ok(raw_html) = transform_html(raw_html, compare_html_walker)
+        && let Ok(raw_html) = minify(&raw_html)
+    {
+        // pulldown-cmark puts a newline after a `<br>`, which `minify`
+        // doesn't remove but TinyMCE does.
+        let normalized_html = normalized_html.replace("<br> ", "<br>");
+        // TinyMCE wraps an `<iframe>` in paragraph tags: for example, `<p>Previous paragraph</p><p><iframe>...</iframe></p>`, which minifies to `<p>Previous paragraph<p><iframe>...</iframe>`. The IDE doesn't wrap the `<iframe>`; for example, `<p>Previous paragraph</p><iframe>...</iframe>`, which minifies to `<p>Previous paragraph</p><iframe>...</iframe>`. Fix up this difference.
+        let raw_html = raw_html.replace("<p><iframe ", "</p><iframe ");
+        if normalized_html != raw_html {
+            println!("Comparison failed.\n    IDE: {normalized_html:#?}\nTinyMCE: {raw_html:#?}");
+        }
 
-    // Normalized `<br>` elements are followed by a newline; raw `<br>` elements
-    // aren't. Remove the newline.
-    let fixed_normalized_html = normalized_html.replace("<br>\n", "<br>");
-
-    // Transforming the HTML with an empty transform normalizes it but leave it
-    // otherwise unchanged.
-    if let Ok(normalized_raw_html) = transform_html(raw_html, |_node| {}) {
-        // Ignore word wrapping and leading/trailing whitespace in the
-        // comparison.
-        map_newlines_to_spaces(&fixed_normalized_html)
-            .eq(map_newlines_to_spaces(&normalized_raw_html))
+        normalized_html == raw_html
     } else {
         false
     }
 }
 
-// Given vectors of two doc blocks, compare them, ignoring newlines.
-fn doc_block_compare(a: &CodeMirrorDocBlockVec, b: &CodeMirrorDocBlockVec) -> bool {
+/// Given vectors of two doc blocks, compare them, ignoring newlines.
+fn doc_blocks_compare(a: &CodeMirrorDocBlockVec, b: &CodeMirrorDocBlockVec) -> bool {
     if a.len() != b.len() {
         return false;
     }
@@ -1523,24 +1635,43 @@ fn debug_shorten<T: Debug>(val: T) -> String {
 // -----
 #[cfg(test)]
 mod tests {
-    use crate::{processing::CodeMirrorDocBlock, translation::doc_block_compare};
+    use crate::{processing::CodeMirrorDocBlock, translation::doc_blocks_compare};
 
     #[test]
     fn test_x1() {
-        let before = vec![CodeMirrorDocBlock {
+        let ide = vec![CodeMirrorDocBlock {
             from: 0,
             to: 20,
             indent: "".to_string(),
             delimiter: "//".to_string(),
-            contents: "<p>Copyright (C) 2025 Bryan A. Jones.</p>\n<p>This file is part of the CodeChat Editor. The CodeChat Editor is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.</p>\n<p>The CodeChat Editor is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.</p>\n<p>You should have received a copy of the GNU General Public License along with the CodeChat Editor. If not, see <a href=\"http://www.gnu.org/licenses\">http://www.gnu.org/licenses</a>.</p>\n<h1><code>debug_enable.mts</code> -- Configure debug features</h1>\n<p>True to enable additional debug logging.</p>".to_string(),
+            contents: "<ul><li><input checked type=checkbox>Task list</ul><p>Line<br> break<p>Non-breaking\u{a0} space.</p><iframe allowfullscreen frameborder=0 height=314 src=https://www.youtube.com/embed/Hp076_dxuVU width=560></iframe>".to_string(),
         }];
-        let after = vec![CodeMirrorDocBlock {
+        let client = vec![CodeMirrorDocBlock {
             from: 0,
             to: 20,
             indent: "".to_string(),
             delimiter: "//".to_string(),
-            contents: "<p>Copyright (C) 2025 Bryan A. Jones.</p>\n<p>This file is part of the CodeChat Editor. The CodeChat Editor is free\nsoftware: you can redistribute it and/or modify it under the terms of the GNU\nGeneral Public License as published by the Free Software Foundation, either\nversion 3 of the License, or (at your option) any later version.</p>\n<p>The CodeChat Editor is distributed in the hope that it will be useful, but\nWITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or\nFITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more\ndetails.</p>\n<p>You should have received a copy of the GNU General Public License along with\nthe CodeChat Editor. If not, see\n<a href=\"http://www.gnu.org/licenses\">http://www.gnu.org/licenses</a>.</p>\n<h1><code>debug_enable.mts</code> -- Configure debug features</h1>\n<p>True to enable additional debug logging.</p>\n".to_string(),
+            contents: "<ul><li><input type=\"checkbox\" checked=\"checked\">Task list</li></ul><p>Line<br>break</p><p>Non-breaking&nbsp; space.</p><p><span contenteditable=\"false\" data-mce-object=\"iframe\" class=\"mce-preview-object mce-object-iframe\" data-mce-p-allowfullscreen=\"allowfullscreen\" data-mce-p-src=\"https://www.youtube.com/embed/Hp076_dxuVU\" data-mce-p-frameborder=\"0\"><iframe width=\"560\" height=\"314\" src=\"https://www.youtube.com/embed/Hp076_dxuVU\" allowfullscreen=\"allowfullscreen\" frameborder=\"0\"></iframe><span class=\"mce-shim\"></span></span></p>".to_string(),
         }];
-        assert!(doc_block_compare(&before, &after));
+        assert!(doc_blocks_compare(&ide, &client));
+    }
+
+    #[test]
+    fn test_x2() {
+        let ide = vec![CodeMirrorDocBlock {
+            from: 0,
+            to: 20,
+            indent: "".to_string(),
+            delimiter: "//".to_string(),
+            contents: "<ol><li><ol><li>1</ol></ol>".to_string(),
+        }];
+        let client = vec![CodeMirrorDocBlock {
+            from: 0,
+            to: 20,
+            indent: "".to_string(),
+            delimiter: "//".to_string(),
+            contents: "<ol> <li> <ol> <li> 1 </ol> </li> </ol> </li>".to_string(),
+        }];
+        assert!(doc_blocks_compare(&ide, &client));
     }
 }

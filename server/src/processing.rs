@@ -24,6 +24,7 @@ use std::{
     borrow::Cow,
     cell::RefCell,
     cmp::{max, min},
+    collections::HashSet,
     ffi::OsStr,
     io,
     iter::Map,
@@ -31,6 +32,8 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
     slice::Iter,
+    string::FromUtf8Error,
+    sync::LazyLock,
 };
 
 // ### Third-party
@@ -54,6 +57,7 @@ use html5ever::{
 use imara_diff::{Algorithm, Diff, Hunk, InternedInput, TokenSource};
 use lazy_static::lazy_static;
 use markup5ever_rcdom::{Node, NodeData, RcDom, SerializableHandle};
+use minify_html;
 use phf::phf_map;
 use pulldown_cmark::{Options, Parser, html};
 use regex::Regex;
@@ -296,7 +300,7 @@ const DOC_BLOCK_SEPARATOR_STRING: &str = concat!(
 // apart. Since this is post hydration, the element names are normalized to
 // lower case.
 const DOC_BLOCK_SEPARATOR_SPLIT_STRING: &str =
-    "<codechateditor-separator></codechateditor-separator>\n";
+    "<codechateditor-separator></codechateditor-separator>";
 // Correctly terminated fenced code blocks produce this, which can be removed
 // from the HTML produced by Markdown conversion.
 const DOC_BLOCK_SEPARATOR_REMOVE_FENCE: &str = r#"<CodeChatEditor-fence>
@@ -420,15 +424,14 @@ pub fn codechat_for_web_to_source(
 ) -> Result<String, CodechatForWebToSourceError> {
     let lexer_name = &codechat_for_web.metadata.mode;
     // Given the mode, find the lexer.
-    let lexer: &std::sync::Arc<crate::lexer::LanguageLexerCompiled> =
-        match LEXERS.map_mode_to_lexer.get(lexer_name) {
-            Some(v) => v,
-            None => {
-                return Err(CodechatForWebToSourceError::InvalidLexer(
-                    lexer_name.clone(),
-                ));
-            }
-        };
+    let lexer = match LEXERS.map_mode_to_lexer.get(lexer_name) {
+        Some(v) => v,
+        None => {
+            return Err(CodechatForWebToSourceError::InvalidLexer(
+                lexer_name.clone(),
+            ));
+        }
+    };
 
     // Extract the plain (not diffed) CodeMirror contents.
     let CodeMirrorDiffable::Plain(ref code_mirror) = codechat_for_web.source else {
@@ -443,14 +446,14 @@ pub fn codechat_for_web_to_source(
         }
         // Translate the HTML document to Markdown.
         let converter = HtmlToMarkdownWrapped::new();
-        let tree = html_to_tree(&code_mirror.doc)?;
+        let tree = html_to_tree(&code_mirror.doc, &None)?;
         dehydrating_walk_node(&tree);
         return converter
             .convert(&tree)
             .map_err(CodechatForWebToSourceError::HtmlToMarkdownFailed);
     }
     let code_doc_block_vec_html = code_mirror_to_code_doc_blocks(code_mirror);
-    let code_doc_block_vec = doc_block_html_to_markdown(code_doc_block_vec_html)
+    let code_doc_block_vec = doc_block_html_to_markdown(code_doc_block_vec_html, &None)
         .map_err(CodechatForWebToSourceError::HtmlToMarkdownFailed)?;
     code_doc_block_vec_to_source(&code_doc_block_vec, lexer)
         .map_err(CodechatForWebToSourceError::CannotTranslateCodeChat)
@@ -458,7 +461,7 @@ pub fn codechat_for_web_to_source(
 
 /// Return the byte index of `s[utf_16_index]`, where the indexing operation is
 /// in UTF-16 code units.
-fn byte_index_of(s: &str, utf_16_index: usize) -> usize {
+pub fn byte_index_of(s: &str, utf_16_index: usize) -> usize {
     let mut byte_index = 0;
     let mut current_index = 0;
     for c in s.chars() {
@@ -577,7 +580,7 @@ impl HtmlToMarkdownWrapped {
                 // ignored (by an
                 // [ignoreFileDirective](https://dprint.dev/plugins/markdown/config/)).
                 // Simply return the unchanged text in this case.
-                .unwrap_or_else(|| converted.to_string()),
+                .unwrap_or(converted),
         )
     }
 
@@ -585,11 +588,7 @@ impl HtmlToMarkdownWrapped {
         let converted = self.html_to_markdown.finalize_conversion();
         Ok(
             format_text(&converted, &self.word_wrap_config, |_, _, _| Ok(None))?
-                // A return value of `None` means the text was unchanged or
-                // ignored (by an
-                // [ignoreFileDirective](https://dprint.dev/plugins/markdown/config/)).
-                // Simply return the unchanged text in this case.
-                .unwrap_or_else(|| converted.to_string()),
+                .unwrap_or(converted),
         )
     }
 
@@ -602,26 +601,45 @@ impl HtmlToMarkdownWrapped {
 }
 
 // Transform HTML in doc blocks to Markdown.
-fn doc_block_html_to_markdown(
+pub fn doc_block_html_to_markdown(
     mut code_doc_block_vec: Vec<CodeDocBlock>,
+    // If provided, the index of each successive node in the DOM, ending with
+    // the offset in UTF-16 characters within the last node (which must be a
+    // text node) at which a marker character will be inserted.
+    //
+    // For this reason, when provided, this function must called with a vec
+    // containing only one doc block.
+    dom_location: &Option<(Vec<usize>, usize)>,
 ) -> Result<Vec<CodeDocBlock>, HtmlToMarkdownWrappedError> {
     let mut converter = HtmlToMarkdownWrapped::new();
-    for code_doc_block in &mut code_doc_block_vec {
+    let mut last_doc_block_index = None;
+    // Only perform marker insertions to a length 1 vec.
+    assert!(dom_location.is_none() || code_doc_block_vec.len() == 1);
+    for (index, code_doc_block) in &mut code_doc_block_vec.iter_mut().enumerate() {
         if let CodeDocBlock::DocBlock(doc_block) = code_doc_block {
-            let tree = html_to_tree(&doc_block.contents)?;
+            last_doc_block_index = Some(index);
+            let tree = html_to_tree(&doc_block.contents, dom_location)?;
             dehydrating_walk_node(&tree);
 
+            // Calculate the total delimiter width: the delimiter width plus the
+            // extra space after it. Special case: an empty delimiter means
+            // we're wrapping a Markdown document to insert a marker, so don't
+            // add the extra space.
+            let delimiter_width = doc_block.delimiter.chars().count();
+            let total_delimiter_width = if delimiter_width > 0 {
+                delimiter_width + 1
+            } else {
+                0
+            };
             // Compute a line wrap width based on the current indent. Set a
             // minimum of half the line wrap width, to prevent ridiculous
             // wrapping with large indents.
             converter.set_line_width(max(
                 WORD_WRAP_MIN_WIDTH,
-                // The +1 factor is for the space separating the delimiter and
-                // the comment text. Use `min` to avoid overflow with unsigned
-                // subtraction.
+                // Use `min` to avoid overflow with unsigned subtraction.
                 WORD_WRAP_COLUMN
                     - min(
-                        doc_block.delimiter.chars().count() + 1 + doc_block.indent.chars().count(),
+                        total_delimiter_width + doc_block.indent.chars().count(),
                         WORD_WRAP_COLUMN,
                     ),
             ));
@@ -629,12 +647,15 @@ fn doc_block_html_to_markdown(
         }
     }
 
-    // Output the finalized conversion.
-    if let Some(code_doc_block) = code_doc_block_vec.last_mut()
-        && let CodeDocBlock::DocBlock(doc_block) = code_doc_block
-    {
+    // Append the finalized conversion to the last doc block.
+    if let Some(last_doc_block_index) = last_doc_block_index {
+        let CodeDocBlock::DocBlock(ref mut last_doc_block) =
+            code_doc_block_vec[last_doc_block_index]
+        else {
+            unreachable!();
+        };
         let last = converter.last()?;
-        doc_block.contents.push_str(&last);
+        last_doc_block.contents.push_str(&last);
     }
 
     Ok(code_doc_block_vec)
@@ -802,6 +823,8 @@ pub enum SourceToCodeChatForWebError {
     // convert the IO error to a string.
     #[error("unable to parse HTML {0}")]
     ParseFailed(String),
+    #[error("encoding error {0}")]
+    EncodeFailed(#[from] FromUtf8Error),
 }
 
 // Transform from source code to `CodeChatForWeb`
@@ -855,6 +878,7 @@ pub fn source_to_codechat_for_web(
             let dry_html = markdown_to_html(file_contents);
             let html = hydrate_html(&dry_html)
                 .map_err(|e| SourceToCodeChatForWebError::ParseFailed(e.to_string()))?;
+            let html = minify(&html)?;
             CodeMirrorDiffable::Plain(CodeMirror {
                 doc: html,
                 doc_blocks: vec![],
@@ -910,6 +934,7 @@ pub fn source_to_codechat_for_web(
             // 3. Hydrate the cleaned HTML.
             let html = hydrate_html(&html)
                 .map_err(|e| SourceToCodeChatForWebError::ParseFailed(e.to_string()))?;
+            let html = minify(&html)?;
             // 4. Split on the separator.
             let mut doc_block_contents_iter = html.split(DOC_BLOCK_SEPARATOR_SPLIT_STRING);
             // <a class="fence-mending-end"></a>
@@ -949,6 +974,27 @@ pub fn source_to_codechat_for_web(
     };
 
     Ok(TranslationResults::CodeChat(codechat_for_web))
+}
+
+// Options for a spec-compliant minifier.
+static MINIFY_OPTIONS: LazyLock<minify_html::Cfg> = LazyLock::new(|| {
+    let mut cfg = minify_html::Cfg::new();
+    cfg.allow_noncompliant_unquoted_attribute_values = false;
+    cfg.allow_optimal_entities = false;
+    cfg.allow_removing_spaces_between_attributes = false;
+    cfg.keep_comments = true;
+    cfg.keep_html_and_head_opening_tags = true;
+    cfg.minify_doctype = false;
+    let mut override_whitespace: HashSet<Vec<u8>> = HashSet::new();
+    override_whitespace.insert(b"wc-mermaid".to_vec());
+    override_whitespace.insert(b"graphviz-graph".to_vec());
+    cfg.override_whitespace = override_whitespace;
+    cfg
+});
+
+/// A spec-compliant minifier.
+pub fn minify(html: &str) -> Result<String, FromUtf8Error> {
+    String::from_utf8(minify_html::minify(html.as_bytes(), &MINIFY_OPTIONS))
 }
 
 // Compute the length of the provided string in UTF16 characters.
@@ -1033,8 +1079,17 @@ fn markdown_to_html(markdown: &str) -> String {
     html_output
 }
 
-// Use html5ever to parse a string containing HTML to a DOM tree.
-fn html_to_tree(html: &str) -> io::Result<Rc<Node>> {
+// Mark the current cursor position with a
+// [private use area code point](https://en.wikipedia.org/wiki/Private_Use_Areas),
+// something that's unlike to appear in source code.
+pub const UNICODE_CURSOR_MARKER: char = '\u{E83B}';
+
+/// Use html5ever to parse a string containing HTML to a DOM tree.
+fn html_to_tree(
+    html: &str,
+    // See the same parameter from `doc_block_html_to_markdown`.
+    dom_location: &Option<(Vec<usize>, usize)>,
+) -> io::Result<Rc<Node>> {
     let dom = parse_document(
         RcDom::default(),
         ParseOpts {
@@ -1048,21 +1103,46 @@ fn html_to_tree(html: &str) -> io::Result<Rc<Node>> {
     .from_utf8()
     .read_from(&mut html.as_bytes())?;
 
-    // TODO: should we report parse errors? If so, how and where?
-    /***
-       if let Some(err) = dom.errors.borrow().first() {
-           //return Err(io::Error::other(err.to_string()));
-       }
-    */
+    if let Some((dom_path, dom_offset)) = dom_location {
+        // Each element in `dom_offsets` is the index of a node in the `dom`.
+        // Take the first index, then descend into the indicated node. Repeat
+        // this process until the last node, which should be a text node. The
+        // last index is the UTF-16 offset with the text contents to insert a
+        // `UNICODE_CURSOR_MARKER` character. Any failures (index exceeds number
+        // of nodes, etc.) use an approximation where possible.
+        let mut current_node = get_dom_body(&dom.document);
+        'outer: for &offset in dom_path {
+            let next_node = {
+                let children = current_node.children.borrow();
+                if offset < children.len() {
+                    children[offset].clone()
+                } else if let Some(last) = children.last() {
+                    last.clone()
+                } else {
+                    break 'outer;
+                }
+            };
+            current_node = next_node;
+        }
+        // Insert the cursor marker at the given character offset within the
+        // text node.
+        if let NodeData::Text { contents } = &current_node.data {
+            let mut text = contents.borrow().to_string();
+            // Convert the character offset into a byte offset.
+            let byte_offset = byte_index_of(&text, *dom_offset);
+            text.insert(byte_offset, UNICODE_CURSOR_MARKER);
+            *contents.borrow_mut() = text.into();
+        }
+    }
 
     Ok(dom.document)
 }
 
 // A framework to transform HTML by parsing it to a DOM tree, walking the tree,
 // then serializing the tree back to an HTML string.
-pub fn transform_html<T: FnOnce(Rc<Node>)>(html: &str, transform: T) -> io::Result<String> {
-    let tree = html_to_tree(html)?;
-    transform(tree.clone());
+pub fn transform_html<T: FnOnce(&Rc<Node>)>(html: &str, transform: T) -> io::Result<String> {
+    let tree = html_to_tree(html, &None)?;
+    transform(&tree);
 
     // Serialize the transformed DOM back to a string.
     let so = SerializeOpts {
@@ -1071,6 +1151,18 @@ pub fn transform_html<T: FnOnce(Rc<Node>)>(html: &str, transform: T) -> io::Resu
         ..Default::default()
     };
     let mut bytes = vec![];
+    serialize(
+        &mut bytes,
+        &SerializableHandle::from(get_dom_body(&tree)),
+        so,
+    )?;
+    let html_out = String::from_utf8(bytes).map_err(io::Error::other)?;
+
+    Ok(html_out)
+}
+
+/// Get the body element from a top-level DOM.
+fn get_dom_body(document: &Rc<Node>) -> Rc<Node> {
     // HTML is:
     //
     // ```html
@@ -1079,11 +1171,7 @@ pub fn transform_html<T: FnOnce(Rc<Node>)>(html: &str, transform: T) -> io::Resu
     //  <body>...</body>  <-- element 1
     // </html>
     // ```
-    let body = tree.children.borrow()[0].children.borrow()[1].clone();
-    serialize(&mut bytes, &SerializableHandle::from(body.clone()), so)?;
-    let html_out = String::from_utf8(bytes).map_err(io::Error::other)?;
-
-    Ok(html_out)
+    document.children.borrow()[0].children.borrow()[1].clone()
 }
 
 // HTML produced from Markdown needs additional processing, termed hydration:
@@ -1096,7 +1184,7 @@ fn hydrate_html(html: &str) -> io::Result<String> {
     transform_html(html, hydrating_walk_node)
 }
 
-fn hydrating_walk_node(node: Rc<Node>) {
+fn hydrating_walk_node(node: &Rc<Node>) {
     for child in node.children.borrow_mut().iter_mut() {
         let possible_replacement_child =
         // Look for a `<pre>` tag
@@ -1144,10 +1232,10 @@ fn hydrating_walk_node(node: Rc<Node>) {
 
         // Replace the child if we found a replacement; otherwise, walk it.
         if let Some(replacement_child) = possible_replacement_child {
-            replacement_child.parent.set(Some(Rc::downgrade(&node)));
+            replacement_child.parent.set(Some(Rc::downgrade(node)));
             *child = replacement_child;
         } else {
-            hydrating_walk_node(child.clone());
+            hydrating_walk_node(child);
         }
     }
 }
@@ -1229,53 +1317,129 @@ fn replace_math_node(child: &Rc<Node>, is_hydrate: bool) -> Option<Rc<Node>> {
     }
 }
 
-fn dehydrating_walk_node(node: &Rc<Node>) {
-    for child in node.children.borrow_mut().iter_mut() {
-        // Look for a custom element tag
-        let possible_replacement_child = if let Some(child_name) = get_node_tag_name(child)
-        && let Some(language_name) = CUSTOM_ELEMENT_TO_CODE_BLOCK_LANGUAGE.get(child_name)
-            // with no attributes
-            && let NodeData::Element {
-                attrs: ref_attrs, ..
-            } = &child.data
-            && ref_attrs.borrow().is_empty()
-            // and only one Text child
-            && let text_children = &child.children.borrow()
-            && text_children.len() == 1
-            && let Some(text_child) = text_children.iter().next()
-            && let NodeData::Text { .. } = &text_child.data
+pub fn remove_tinymce_data(
+    parent: &Rc<Node>,
+    // The index of the node in parent.children.
+    index: usize,
+) -> Option<Rc<Node>> {
+    let node = parent.children.borrow()[index].clone();
+    // Remove TinyMCE temp attributes produced in the raw format.
+    if let NodeData::Element { name, attrs, .. } = &node.data {
+        // Look for any temporary elements inserted for GUI manipulation.
+        if name.local == *"span"
+            && attrs
+                .borrow()
+                .iter()
+                .any(|attr| attr.name.local == *"class" && attr.value.starts_with("mce"))
         {
-            // Create `<pre><code class="from language_name">text_child
-            // contents</code></pre>`.
-            let pre = Node::new(NodeData::Element {
-                name: QualName::new(None, Namespace::from(""), LocalName::from("pre")),
-                attrs: RefCell::new(vec![]),
-                template_contents: RefCell::new(None),
-                mathml_annotation_xml_integration_point: false,
-            });
-            let code = Node::new(NodeData::Element {
-                name: QualName::new(None, Namespace::from(""), LocalName::from("code")),
-                attrs: RefCell::new(vec![Attribute {
-                    name: QualName::new(None, Namespace::from(""), LocalName::from("class")),
-                    value: (*language_name).into(),
-                }]),
-                template_contents: RefCell::new(None),
-                mathml_annotation_xml_integration_point: false,
-            });
-            code.parent.set(Some(Rc::downgrade(&pre)));
-            code.children.borrow_mut().push(text_child.clone());
-            pre.children.borrow_mut().push(code);
-            Some(pre)
-        } else {
-            replace_math_node(child, false)
-        };
+            // Replace this element with its children. First, update the
+            // children with the new parent.
+            let new_parent = node
+                .parent
+                .take()
+                .unwrap_or_else(|| panic!("Must be non-root node, but saw {:#?}.", node.data));
+            for child in node.children.borrow_mut().iter_mut() {
+                child.parent.set(Some(new_parent.clone()));
+            }
 
-        // Replace the child if we found a replacement; otherwise, walk it.
-        if let Some(replacement_child) = possible_replacement_child {
-            *child = replacement_child;
+            // Insert the children in place of the node.
+            let children: Vec<_> = node.children.borrow().to_vec();
+            let no_children = children.is_empty();
+            parent.children.borrow_mut().splice(index..=index, children);
+            // Process the first child which replaced the current node, since it
+            // hasn't been processed yet, then return it as the updated node.
+            return if no_children {
+                None
+            } else {
+                // Important: all previous borrows of `parent` must be dropped,
+                // since this will re-borrow it.
+                remove_tinymce_data(parent, index)
+            };
         } else {
-            dehydrating_walk_node(child);
+            // If we didn't remove this element, then filter out unwanted
+            // attributes.
+            attrs.borrow_mut().retain(|attr| {
+                !(attr.name.local.starts_with("data-mce-")
+                    || (attr.name.local == *"class" && attr.value.starts_with("mce-")))
+            });
         }
+    }
+    Some(node.clone())
+}
+
+/// Walk a node, dehydrating it by removing TineMCE temporary attributes,
+/// changing math to pulldown-cmark's output, and changing graphviz/Mermaid to
+/// fenced code blocks.
+fn dehydrating_walk_node(node: &Rc<Node>) {
+    let mut index = 0;
+    // Avoid a `while` loop, since accessing `node.children` requires a borrow
+    // held for the body of the loop.
+    while index < node.children.borrow().len() {
+        // Remove TinyMCE data from the child at `index`; if the child was
+        // spliced away (no replacement), the slot is gone; leave \`index\`\`
+        // unchanged to process what is now at this position.
+        if remove_tinymce_data(node, index).is_none() {
+            continue;
+        }
+
+        // Compute the replacement (if any) inside a block so `borrow_mut` is
+        // dropped before the recursive walk, which may itself need `borrow_mut`
+        // via `remove_tinymce_data`.
+        let child_to_walk = {
+            let mut children = node.children.borrow_mut();
+            if index >= children.len() {
+                break;
+            }
+            let child = &mut children[index];
+            let replacement = if let Some(child_name) = get_node_tag_name(child)
+                && let Some(language_name) = CUSTOM_ELEMENT_TO_CODE_BLOCK_LANGUAGE.get(child_name)
+                // with no attributes
+                && let NodeData::Element {
+                    attrs: ref_attrs, ..
+                } = &child.data
+                && ref_attrs.borrow().is_empty()
+                // and only one Text child
+                && let text_children = &child.children.borrow()
+                && text_children.len() == 1
+                && let Some(text_child) = text_children.iter().next()
+                && let NodeData::Text { .. } = &text_child.data
+            {
+                // Create `<pre><code class="from language_name">text_child
+                // contents</code></pre>`.
+                let pre = Node::new(NodeData::Element {
+                    name: QualName::new(None, Namespace::from(""), LocalName::from("pre")),
+                    attrs: RefCell::new(vec![]),
+                    template_contents: RefCell::new(None),
+                    mathml_annotation_xml_integration_point: false,
+                });
+                let code = Node::new(NodeData::Element {
+                    name: QualName::new(None, Namespace::from(""), LocalName::from("code")),
+                    attrs: RefCell::new(vec![Attribute {
+                        name: QualName::new(None, Namespace::from(""), LocalName::from("class")),
+                        value: (*language_name).into(),
+                    }]),
+                    template_contents: RefCell::new(None),
+                    mathml_annotation_xml_integration_point: false,
+                });
+                code.parent.set(Some(Rc::downgrade(&pre)));
+                code.children.borrow_mut().push(text_child.clone());
+                pre.children.borrow_mut().push(code);
+                Some(pre)
+            } else {
+                replace_math_node(child, false)
+            };
+            if let Some(replacement_child) = replacement {
+                *child = replacement_child;
+                None
+            } else {
+                Some(children[index].clone())
+            }
+        };
+        // `borrow_mut` is now dropped; safe to recurse.
+        if let Some(child) = child_to_walk {
+            dehydrating_walk_node(&child);
+        }
+        index += 1;
     }
 }
 
