@@ -714,7 +714,7 @@ fn run_extensions_build(
 }
 
 fn run_change_version(new_version: &String) -> io::Result<()> {
-    let cargo_regex = r#"(\r?\nversion = ")[\d.]+("\r?\n)"#;
+    let cargo_regex = r#"(\r?\nversion = ")[\d.]+(?:-[a-z\d]*)?("\r?\n)"#;
     let replacement_string = format!("${{1}}{new_version}${{2}}");
     search_and_replace_file("Cargo.toml", cargo_regex, &replacement_string)?;
     search_and_replace_file(
