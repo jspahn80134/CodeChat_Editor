@@ -547,7 +547,7 @@ class DocBlockWidget extends WidgetType {
             const tinymce_div = document.getElementById(TINYMCE_INST)!;
             codechat_body.insertBefore(tinymce_div, null);
             // Make TinyMCE invisible, since it's placed below the body of the page.
-            tinymce_div.classList.add(CODECHAT_DOC_HIDDEN);.");
+            tinymce_div.classList.add(CODECHAT_DOC_HIDDEN);
             tinymce.activeEditor?.resetContent();
         }
     }
