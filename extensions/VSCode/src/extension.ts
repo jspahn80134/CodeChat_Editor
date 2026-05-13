@@ -124,11 +124,14 @@ let codeChatEditorServer: CodeChatEditorServer | undefined;
 // CAPTURE (Dissertation instrumentation)
 // --------------------------------------
 
+// Capture uses these helpers only for documentation-like files. Source files
+// classify directly as code; Markdown/RST get a finer split so prose edits count
+// as documentation activity while embedded snippets count as code activity.
 function isInMarkdownCodeFence(
     doc: vscode.TextDocument,
     line: number,
 ): boolean {
-    // Very simple fence tracker: toggles when encountering \`\`\` or ~~~ at
+    // Very simple fence tracker: toggles when encountering ``` or ~~~ at
     // start of line. Good enough for dissertation instrumentation; refine later
     // if needed.
     let inFence = false;
