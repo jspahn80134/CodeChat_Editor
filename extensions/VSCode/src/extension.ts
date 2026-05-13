@@ -297,15 +297,12 @@ function buildFileFields(
     filePath: string | undefined,
     settings: StudySettings,
 ): Pick<CaptureEventWire, "file_path" | "file_hash" | "language_id"> {
-    const document =
-        filePath === undefined
-            ? vscode.window.activeTextEditor?.document
-            : get_document(filePath);
     if (filePath === undefined) {
         return {
-            language_id: document?.languageId,
+            language_id: vscode.window.activeTextEditor?.document.languageId,
         };
     }
+    const document = get_document(filePath);
     return {
         file_path: settings.hashFilePaths ? undefined : filePath,
         file_hash: settings.hashFilePaths ? hashText(filePath) : undefined,
@@ -360,8 +357,6 @@ async function sendCaptureEvent(
         return;
     }
 
-    logCaptureEvent(payload);
-
     try {
         await codeChatEditorServer.sendCaptureEvent(
             stringifyCapturePayload(payload),
@@ -376,12 +371,6 @@ async function sendCaptureEvent(
 function stringifyCapturePayload(payload: CaptureEventWire): string {
     return JSON.stringify(payload, (_key, value) =>
         typeof value === "bigint" ? Number(value) : value,
-    );
-}
-
-function logCaptureEvent(payload: CaptureEventWire) {
-    capture_output_channel?.appendLine(
-        `${new Date().toISOString()} ${stringifyCapturePayload(payload)}`,
     );
 }
 
@@ -425,14 +414,21 @@ async function refreshCaptureStatus(): Promise<void> {
         const status = JSON.parse(
             codeChatEditorServer.getCaptureStatus(),
         ) as CaptureStatus;
-        const label =
-            status.state === "database"
-                ? "Capture: DB"
-                : status.state === "fallback"
-                  ? "Capture: Fallback"
-                  : status.state === "starting"
-                    ? "Capture: Starting"
-                    : "Capture: Off";
+        let label: string;
+        switch (status.state) {
+            case "database":
+                label = "Capture: DB";
+                break;
+            case "fallback":
+                label = "Capture: Fallback";
+                break;
+            case "starting":
+                label = "Capture: Starting";
+                break;
+            default:
+                label = "Capture: Off";
+                break;
+        }
         updateCaptureStatusBar(
             label,
             [
