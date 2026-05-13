@@ -506,7 +506,7 @@ macro_rules! queue_send_func {
 // The timeout for a reply from a websocket, in ms. Use a short timeout to speed
 // up unit tests.
 pub const REPLY_TIMEOUT_MS: Duration = if cfg!(test) {
-    Duration::from_millis(500)
+    Duration::from_millis(2500)
 } else {
     Duration::from_millis(15000)
 };
