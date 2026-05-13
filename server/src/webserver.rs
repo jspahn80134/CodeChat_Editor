@@ -97,7 +97,7 @@ use crate::{
     },
 };
 
-use crate::capture::{CaptureConfig, CaptureEvent, CaptureStatus, EventCapture};
+use crate::capture::{CaptureConfig, CaptureEvent, CaptureEventType, CaptureStatus, EventCapture};
 
 use chrono::Utc;
 
@@ -456,7 +456,7 @@ pub struct CaptureEventWire {
     pub file_hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file_path: Option<String>,
-    pub event_type: String,
+    pub event_type: CaptureEventType,
 
     /// Optional client-side timestamp (milliseconds since Unix epoch).
     #[serde(skip_serializing_if = "Option::is_none")]

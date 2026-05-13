@@ -191,6 +191,7 @@ function classifyAtPosition(
 type CaptureEventData = Record<string, unknown>;
 
 type CaptureMode = "treatment" | "comparison" | "capture-only";
+type CaptureEventType = CaptureEventWire["event_type"];
 
 interface StudySettings {
     enabled: boolean;
@@ -312,7 +313,7 @@ function buildFileFields(
 
 // Helper to send a capture event to the Rust server.
 async function sendCaptureEvent(
-    eventType: string,
+    eventType: CaptureEventType,
     filePath?: string,
     data: CaptureEventData = {},
 ): Promise<void> {
@@ -463,7 +464,9 @@ async function showCaptureStatus(): Promise<void> {
     );
 }
 
-async function recordStudyLifecycleEvent(eventType: string): Promise<void> {
+async function recordStudyLifecycleEvent(
+    eventType: CaptureEventType,
+): Promise<void> {
     const active = vscode.window.activeTextEditor;
     await sendCaptureEvent(eventType, active?.document.fileName, {
         command: eventType,

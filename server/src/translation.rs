@@ -222,7 +222,7 @@ use tokio::{
 
 // ### Local
 use crate::{
-    capture::event_types,
+    capture::{CaptureEventType, event_types},
     lexer::{CodeDocBlock, DocBlock, supported_languages::MARKDOWN_MODE},
     processing::{
         CodeChatForWeb, CodeMirror, CodeMirrorDiff, CodeMirrorDiffable, CodeMirrorDocBlock,
@@ -492,7 +492,7 @@ impl CaptureContext {
 
     fn capture_event(
         &self,
-        event_type: &str,
+        event_type: CaptureEventType,
         file_path: Option<String>,
         data: serde_json::Value,
     ) -> Option<CaptureEventWire> {
@@ -525,7 +525,7 @@ impl CaptureContext {
             language_id: None,
             file_hash: None,
             file_path,
-            event_type: event_type.to_string(),
+            event_type,
             client_timestamp_ms: None,
             client_tz_offset_min: self.client_tz_offset_min,
             data: Some(serde_json::Value::Object(data)),
@@ -814,7 +814,7 @@ impl TranslationTask {
 
     fn log_server_capture_event(
         &self,
-        event_type: &str,
+        event_type: CaptureEventType,
         file_path: &std::path::Path,
         data: serde_json::Value,
     ) {

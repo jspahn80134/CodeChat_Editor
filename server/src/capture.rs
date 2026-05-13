@@ -53,7 +53,7 @@
 //   integrity and versioning metadata.
 // * `file_path` – logical path of the file being edited.
 // * `file_hash` – privacy-preserving SHA-256 hash of the file path.
-// * `event_type` – coarse event type (see `event_type` constants below).
+// * `event_type` – coarse event type (see `CaptureEventType` below).
 // * `timestamp` – RFC3339 timestamp (in UTC).
 // * `data` – JSONB payload with event-specific details.
 
@@ -74,26 +74,84 @@ use tokio::sync::mpsc;
 use tokio_postgres::{Client, NoTls};
 use ts_rs::TS;
 
-/// Canonical event type strings. Keep these stable for analysis.
+/// Canonical event types. Keep the serialized strings stable for analysis.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum CaptureEventType {
+    WriteDoc,
+    WriteCode,
+    SwitchPane,
+    DocSession,
+    Save,
+    Compile,
+    Run,
+    SessionStart,
+    SessionEnd,
+    CompileEnd,
+    RunEnd,
+    TaskStart,
+    TaskSubmit,
+    DebugTaskStart,
+    DebugTaskSubmit,
+    HandoffStart,
+    HandoffEnd,
+    ReflectionPromptInserted,
+}
+
+impl CaptureEventType {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::WriteDoc => "write_doc",
+            Self::WriteCode => "write_code",
+            Self::SwitchPane => "switch_pane",
+            Self::DocSession => "doc_session",
+            Self::Save => "save",
+            Self::Compile => "compile",
+            Self::Run => "run",
+            Self::SessionStart => "session_start",
+            Self::SessionEnd => "session_end",
+            Self::CompileEnd => "compile_end",
+            Self::RunEnd => "run_end",
+            Self::TaskStart => "task_start",
+            Self::TaskSubmit => "task_submit",
+            Self::DebugTaskStart => "debug_task_start",
+            Self::DebugTaskSubmit => "debug_task_submit",
+            Self::HandoffStart => "handoff_start",
+            Self::HandoffEnd => "handoff_end",
+            Self::ReflectionPromptInserted => "reflection_prompt_inserted",
+        }
+    }
+}
+
+impl std::fmt::Display for CaptureEventType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 pub mod event_types {
-    pub const WRITE_DOC: &str = "write_doc";
-    pub const WRITE_CODE: &str = "write_code";
-    pub const SWITCH_PANE: &str = "switch_pane";
-    pub const DOC_SESSION: &str = "doc_session"; // duration of reflective writing
-    pub const SAVE: &str = "save";
-    pub const COMPILE: &str = "compile";
-    pub const RUN: &str = "run";
-    pub const SESSION_START: &str = "session_start";
-    pub const SESSION_END: &str = "session_end";
-    pub const COMPILE_END: &str = "compile_end";
-    pub const RUN_END: &str = "run_end";
-    pub const TASK_START: &str = "task_start";
-    pub const TASK_SUBMIT: &str = "task_submit";
-    pub const DEBUG_TASK_START: &str = "debug_task_start";
-    pub const DEBUG_TASK_SUBMIT: &str = "debug_task_submit";
-    pub const HANDOFF_START: &str = "handoff_start";
-    pub const HANDOFF_END: &str = "handoff_end";
-    pub const REFLECTION_PROMPT_INSERTED: &str = "reflection_prompt_inserted";
+    use super::CaptureEventType;
+
+    pub const WRITE_DOC: CaptureEventType = CaptureEventType::WriteDoc;
+    pub const WRITE_CODE: CaptureEventType = CaptureEventType::WriteCode;
+    pub const SWITCH_PANE: CaptureEventType = CaptureEventType::SwitchPane;
+    pub const DOC_SESSION: CaptureEventType = CaptureEventType::DocSession;
+    pub const SAVE: CaptureEventType = CaptureEventType::Save;
+    pub const COMPILE: CaptureEventType = CaptureEventType::Compile;
+    pub const RUN: CaptureEventType = CaptureEventType::Run;
+    pub const SESSION_START: CaptureEventType = CaptureEventType::SessionStart;
+    pub const SESSION_END: CaptureEventType = CaptureEventType::SessionEnd;
+    pub const COMPILE_END: CaptureEventType = CaptureEventType::CompileEnd;
+    pub const RUN_END: CaptureEventType = CaptureEventType::RunEnd;
+    pub const TASK_START: CaptureEventType = CaptureEventType::TaskStart;
+    pub const TASK_SUBMIT: CaptureEventType = CaptureEventType::TaskSubmit;
+    pub const DEBUG_TASK_START: CaptureEventType = CaptureEventType::DebugTaskStart;
+    pub const DEBUG_TASK_SUBMIT: CaptureEventType = CaptureEventType::DebugTaskSubmit;
+    pub const HANDOFF_START: CaptureEventType = CaptureEventType::HandoffStart;
+    pub const HANDOFF_END: CaptureEventType = CaptureEventType::HandoffEnd;
+    pub const REFLECTION_PROMPT_INSERTED: CaptureEventType =
+        CaptureEventType::ReflectionPromptInserted;
 }
 
 /// Configuration used to construct the PostgreSQL connection string.
@@ -228,7 +286,7 @@ pub struct CaptureEvent {
     pub assignment_id: Option<String>,
     pub group_id: Option<String>,
     pub file_path: Option<String>,
-    pub event_type: String,
+    pub event_type: CaptureEventType,
     /// When the event occurred, in UTC.
     pub timestamp: DateTime<Utc>,
     /// Event-specific payload, stored as JSON text in the DB.
@@ -242,7 +300,7 @@ impl CaptureEvent {
         assignment_id: Option<String>,
         group_id: Option<String>,
         file_path: Option<String>,
-        event_type: impl Into<String>,
+        event_type: CaptureEventType,
         timestamp: DateTime<Utc>,
         data: serde_json::Value,
     ) -> Self {
@@ -251,7 +309,7 @@ impl CaptureEvent {
             assignment_id,
             group_id,
             file_path,
-            event_type: event_type.into(),
+            event_type,
             timestamp,
             data,
         }
@@ -263,7 +321,7 @@ impl CaptureEvent {
         assignment_id: Option<String>,
         group_id: Option<String>,
         file_path: Option<String>,
-        event_type: impl Into<String>,
+        event_type: CaptureEventType,
         data: serde_json::Value,
     ) -> Self {
         Self::new(
@@ -516,7 +574,7 @@ fn append_fallback_event(fallback_path: &Path, event: &CaptureEvent) -> io::Resu
             "assignment_id": event.assignment_id,
             "group_id": event.group_id,
             "file_path": event.file_path,
-            "event_type": event.event_type,
+            "event_type": event.event_type.as_str(),
             "timestamp": event.timestamp.to_rfc3339(),
             "data": event.data,
         }
@@ -628,10 +686,11 @@ async fn insert_rich_event(
     let server_timestamp_ms = capture_data_i64(&event.data, "server_timestamp_ms")
         .unwrap_or_else(|| event.timestamp.timestamp_millis());
     let data_text = event.data.to_string();
+    let event_type = event.event_type.as_str();
 
     debug!(
         "Capture: executing rich INSERT for user_id={}, event_type={}, timestamp={}",
-        event.user_id, event.event_type, timestamp
+        event.user_id, event_type, timestamp
     );
 
     client
@@ -665,7 +724,7 @@ async fn insert_rich_event(
                 &event.file_path,
                 &path_privacy,
                 &capture_mode,
-                &event.event_type,
+                &event_type,
                 &timestamp,
                 &client_timestamp_ms,
                 &client_tz_offset_min,
@@ -682,10 +741,11 @@ async fn insert_legacy_event(
 ) -> Result<u64, tokio_postgres::Error> {
     let timestamp = event.timestamp.to_rfc3339();
     let data_text = event.data.to_string();
+    let event_type = event.event_type.as_str();
 
     debug!(
         "Capture: executing legacy INSERT for user_id={}, event_type={}, timestamp={}",
-        event.user_id, event.event_type, timestamp
+        event.user_id, event_type, timestamp
     );
 
     client
@@ -698,7 +758,7 @@ async fn insert_legacy_event(
                 &event.assignment_id,
                 &event.group_id,
                 &event.file_path,
-                &event.event_type,
+                &event_type,
                 &timestamp,
                 &data_text,
             ],
@@ -735,6 +795,19 @@ mod tests {
     }
 
     #[test]
+    fn capture_event_type_uses_stable_serialized_strings() {
+        assert_eq!(
+            serde_json::to_value(event_types::WRITE_DOC).unwrap(),
+            json!("write_doc")
+        );
+        assert_eq!(
+            serde_json::from_value::<CaptureEventType>(json!("compile_end")).unwrap(),
+            event_types::COMPILE_END
+        );
+        assert!(serde_json::from_value::<CaptureEventType>(json!("random")).is_err());
+    }
+
+    #[test]
     fn capture_event_new_sets_all_fields() {
         let ts = Utc::now();
 
@@ -743,7 +816,7 @@ mod tests {
             Some("lab1".to_string()),
             Some("groupA".to_string()),
             Some("/path/to/file.rs".to_string()),
-            "write_doc",
+            event_types::WRITE_DOC,
             ts,
             json!({ "chars_typed": 42 }),
         );
@@ -752,7 +825,7 @@ mod tests {
         assert_eq!(ev.assignment_id.as_deref(), Some("lab1"));
         assert_eq!(ev.group_id.as_deref(), Some("groupA"));
         assert_eq!(ev.file_path.as_deref(), Some("/path/to/file.rs"));
-        assert_eq!(ev.event_type, "write_doc");
+        assert_eq!(ev.event_type, event_types::WRITE_DOC);
         assert_eq!(ev.timestamp, ts);
         assert_eq!(ev.data, json!({ "chars_typed": 42 }));
     }
@@ -765,7 +838,7 @@ mod tests {
             None,
             None,
             None,
-            "save",
+            event_types::SAVE,
             json!({ "reason": "manual" }),
         );
         let after = Utc::now();
@@ -774,7 +847,7 @@ mod tests {
         assert!(ev.assignment_id.is_none());
         assert!(ev.group_id.is_none());
         assert!(ev.file_path.is_none());
-        assert_eq!(ev.event_type, "save");
+        assert_eq!(ev.event_type, event_types::SAVE);
         assert_eq!(ev.data, json!({ "reason": "manual" }));
 
         // Timestamp sanity check: it should be between before and after
@@ -1035,7 +1108,7 @@ mod tests {
         assert_eq!(assignment_id.as_deref(), Some("hw-integration"));
         assert_eq!(group_id.as_deref(), Some("group-integration"));
         assert!(file_path.is_none());
-        assert_eq!(event_type, event_types::WRITE_DOC);
+        assert_eq!(event_type, event_types::WRITE_DOC.as_str());
         assert_eq!(event_id.as_deref(), Some(expected_event_id.as_str()));
         assert_eq!(sequence_number, Some(42));
         assert_eq!(schema_version, Some(2));
