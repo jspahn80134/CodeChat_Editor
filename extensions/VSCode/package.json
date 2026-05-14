@@ -84,59 +84,12 @@
                 "CodeChatEditor.Capture.ParticipantId": {
                     "type": "string",
                     "default": "",
-                    "markdownDescription": "Pseudonymous participant identifier used as the capture user_id."
-                },
-                "CodeChatEditor.Capture.AssignmentId": {
-                    "type": "string",
-                    "default": "",
-                    "markdownDescription": "Assignment, lab, or task identifier attached to capture events."
-                },
-                "CodeChatEditor.Capture.GroupId": {
-                    "type": "string",
-                    "default": "",
-                    "markdownDescription": "Study group, section, or team identifier attached to capture events."
-                },
-                "CodeChatEditor.Capture.CourseId": {
-                    "type": "string",
-                    "default": "",
-                    "markdownDescription": "Course or deployment identifier attached to capture events."
-                },
-                "CodeChatEditor.Capture.TaskId": {
-                    "type": "string",
-                    "default": "",
-                    "markdownDescription": "Current study task identifier attached to capture events."
-                },
-                "CodeChatEditor.Capture.Mode": {
-                    "type": "string",
-                    "default": "treatment",
-                    "enum": [
-                        "treatment",
-                        "comparison",
-                        "capture-only"
-                    ],
-                    "enumDescriptions": [
-                        "Capture events and enable reflective prompt commands.",
-                        "Capture events without reflective prompt scaffolding.",
-                        "Capture events only for baseline or pilot instrumentation."
-                    ],
-                    "markdownDescription": "Study condition/mode attached to capture events."
+                    "markdownDescription": "Pseudonymous participant identifier used as the capture user_id. If left blank, CodeChat generates a UUID when the student gives consent."
                 },
                 "CodeChatEditor.Capture.HashFilePaths": {
                     "type": "boolean",
                     "default": true,
                     "markdownDescription": "Hash local file paths before they are sent to capture storage."
-                },
-                "CodeChatEditor.Capture.PromptTemplates": {
-                    "type": "array",
-                    "default": [
-                        "What changed in your understanding of this code?",
-                        "What assumption are you making, and how could you test it?",
-                        "What would another developer need to know before maintaining this?"
-                    ],
-                    "items": {
-                        "type": "string"
-                    },
-                    "markdownDescription": "Reflective writing prompts available in treatment mode."
                 }
             }
         },
@@ -151,7 +104,7 @@
             },
             {
                 "command": "extension.codeChatCaptureStatus",
-                "title": "Show CodeChat Capture Status"
+                "title": "Manage CodeChat Capture"
             },
             {
                 "command": "extension.codeChatInsertReflectionPrompt",

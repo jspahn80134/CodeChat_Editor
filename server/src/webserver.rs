@@ -427,35 +427,37 @@ pub struct Credentials {
 
 /// JSON payload received from clients for capture events.
 ///
-/// The server will supply the timestamp; clients do not need to send it.
+/// The server supplies the authoritative timestamp. Study metadata such as
+/// course, assignment, group, condition, and task is not part of this wire type:
+/// those values are inferred later from researcher-managed mappings keyed by
+/// the pseudonymous `user_id` and event timestamps.
 #[derive(Debug, Serialize, Deserialize, PartialEq, TS)]
 #[ts(export, optional_fields)]
 pub struct CaptureEventWire {
+    /// Client-generated unique event identifier.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub event_id: Option<String>,
+    /// Client-local event order for one extension session.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sequence_number: Option<i64>,
+    /// Capture payload schema version.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schema_version: Option<i32>,
+    /// Pseudonymous participant UUID. This is not the student's real identity.
     pub user_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub assignment_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub group_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub condition: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub course_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub task_id: Option<String>,
+    /// Source of this event, such as the VS Code extension or server translation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub event_source: Option<String>,
+    /// VS Code language identifier for the active file, when known.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub language_id: Option<String>,
+    /// SHA-256 hash of the local file path when path hashing is enabled.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file_hash: Option<String>,
+    /// Raw file path only when path hashing is disabled for debugging.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file_path: Option<String>,
+    /// Canonical capture event type.
     pub event_type: CaptureEventType,
 
     /// Optional client-side timestamp (milliseconds since Unix epoch).
@@ -708,15 +710,6 @@ pub fn log_capture_event(app_state: &WebAppState, wire: CaptureEventWire) -> Cap
                     serde_json::json!(schema_version),
                 );
             }
-            if let Some(condition) = &wire.condition {
-                map.insert("condition".to_string(), serde_json::json!(condition));
-            }
-            if let Some(course_id) = &wire.course_id {
-                map.insert("course_id".to_string(), serde_json::json!(course_id));
-            }
-            if let Some(task_id) = &wire.task_id {
-                map.insert("task_id".to_string(), serde_json::json!(task_id));
-            }
             if let Some(event_source) = &wire.event_source {
                 map.insert("event_source".to_string(), serde_json::json!(event_source));
             }
@@ -740,8 +733,6 @@ pub fn log_capture_event(app_state: &WebAppState, wire: CaptureEventWire) -> Cap
 
         let event = CaptureEvent {
             user_id: wire.user_id,
-            assignment_id: wire.assignment_id,
-            group_id: wire.group_id,
             file_path: wire.file_path,
             event_type: wire.event_type,
             // Server decides when the event is recorded.

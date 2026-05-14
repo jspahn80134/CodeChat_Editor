@@ -55,12 +55,7 @@ EVENT_FIELDS = [
 
 IDENTITY_FIELDS = [
     "user_id",
-    "assignment_id",
-    "group_id",
     "session_id",
-    "condition",
-    "course_id",
-    "task_id",
 ]
 
 EVENT_ROW_FIELDS = [
@@ -82,7 +77,6 @@ EVENT_ROW_FIELDS = [
     "file_hash",
     "path_privacy",
     "language_id",
-    "capture_mode",
     "classification_basis",
     "write_source",
     "mode",
@@ -223,15 +217,11 @@ DB_METADATA_FIELDS = [
     "event_id",
     "sequence_number",
     "schema_version",
-    "condition",
-    "course_id",
-    "task_id",
     "session_id",
     "event_source",
     "language_id",
     "file_hash",
     "path_privacy",
-    "capture_mode",
     "client_timestamp_ms",
     "client_tz_offset_min",
     "server_timestamp_ms",
@@ -239,13 +229,8 @@ DB_METADATA_FIELDS = [
 
 FIELD_DESCRIPTIONS = {
     "event_index": "One-based event order after sorting by timestamp and sequence number.",
-    "user_id": "Participant identifier supplied by capture settings.",
-    "assignment_id": "Assignment or lab identifier supplied by capture settings.",
-    "group_id": "Study group, section, or cohort identifier supplied by capture settings.",
+    "user_id": "Pseudonymous participant UUID generated or supplied by the VS Code extension.",
     "session_id": "Capture session UUID emitted by the VS Code extension.",
-    "condition": "Study condition, such as treatment, comparison, or capture-only.",
-    "course_id": "Course or deployment identifier supplied by capture settings.",
-    "task_id": "Task identifier supplied by capture settings.",
     "event_id": "Client-generated UUID when available.",
     "sequence_number": "Client-side monotonically increasing sequence number when available.",
     "schema_version": "Capture payload schema version.",
@@ -256,14 +241,13 @@ FIELD_DESCRIPTIONS = {
     "server_timestamp_ms": "Server-side timestamp in milliseconds since Unix epoch.",
     "client_tz_offset_min": "Client timezone offset from JavaScript Date().getTimezoneOffset().",
     "client_server_latency_ms": "Approximate server timestamp minus client timestamp.",
-    "elapsed_session_seconds": "Seconds since the first event in the same participant/session/task row.",
-    "gap_seconds": "Seconds since the prior event in the same participant/session/task row.",
+    "elapsed_session_seconds": "Seconds since the first event in the same participant/session row.",
+    "gap_seconds": "Seconds since the prior event in the same participant/session row.",
     "file_id": "Privacy-preserving file identifier. Uses captured file hash when available, otherwise a SHA-256 hash of the captured path.",
     "file_hash": "Captured SHA-256 file path hash when the extension supplied one.",
     "file_path": "Raw captured file path. Only exported with --include-file-paths.",
     "path_privacy": "Path privacy mode reported by capture settings.",
     "language_id": "VS Code language identifier when available.",
-    "capture_mode": "Capture mode reported in event data.",
     "classification_basis": "Server-side write-classification basis when available.",
     "write_source": "Write event source, such as server_translation or CodeMirror update path.",
     "mode": "Event-specific mode or CodeChat lexer mode.",
@@ -381,8 +365,6 @@ def normalize_db_record(record: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "user_id": record.get("user_id"),
-        "assignment_id": record.get("assignment_id"),
-        "group_id": record.get("group_id"),
         "file_path": record.get("file_path"),
         "event_type": record.get("event_type"),
         "timestamp": record.get("timestamp"),
@@ -826,12 +808,7 @@ def normalize_event_rows(
         row: dict[str, Any] = {
             "event_index": original_index,
             "user_id": text_value(event.get("user_id")),
-            "assignment_id": text_value(event.get("assignment_id")),
-            "group_id": text_value(event.get("group_id")),
             "session_id": data_text(data, "session_id"),
-            "condition": data_text(data, "condition"),
-            "course_id": data_text(data, "course_id"),
-            "task_id": data_text(data, "task_id"),
             "event_id": data_text(data, "event_id"),
             "sequence_number": int_or_blank(data.get("sequence_number")),
             "schema_version": int_or_blank(data.get("schema_version")),
@@ -852,7 +829,6 @@ def normalize_event_rows(
             "file_hash": file_hash,
             "path_privacy": data_text(data, "path_privacy"),
             "language_id": data_text(data, "language_id", "languageId"),
-            "capture_mode": data_text(data, "capture_mode"),
             "classification_basis": data_text(data, "classification_basis"),
             "write_source": data_text(data, "source"),
             "mode": data_text(data, "mode"),
@@ -1310,9 +1286,7 @@ def task_lifecycle_rows(event_rows: Iterable[dict[str, Any]]) -> list[dict[str, 
     rows.sort(
         key=lambda row: (
             row["user_id"],
-            row["assignment_id"],
             row["session_id"],
-            row["task_id"],
             row["lifecycle_kind"],
             row["lifecycle_index"],
         )

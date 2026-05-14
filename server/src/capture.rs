@@ -40,15 +40,14 @@
 //
 // ```sql
 // event_id, sequence_number, schema_version,
-// user_id, assignment_id, group_id, condition, course_id, task_id, session_id,
-// event_source, language_id, file_hash, file_path, path_privacy, capture_mode,
-// event_type, timestamp, client_timestamp_ms, client_tz_offset_min,
-// server_timestamp_ms, data
+// user_id, session_id, event_source, language_id, file_hash, file_path,
+// path_privacy, event_type, timestamp, client_timestamp_ms,
+// client_tz_offset_min, server_timestamp_ms, data
 // ```
 //
-// * `user_id` – participant identifier (student id, pseudonym, etc.).
-// * `assignment_id`, `task_id` – logical assignment / task identifiers.
-// * `group_id`, `condition`, `course_id` – study grouping metadata.
+// * `user_id` – pseudonymous participant UUID. Course, group, assignment, and
+//   study condition are intentionally joined later from researcher-managed
+//   participant/date mappings instead of being configured by students.
 // * `session_id`, `event_id`, `sequence_number`, `schema_version` – event
 //   integrity and versioning metadata.
 // * `file_path` – logical path of the file being edited.
@@ -79,23 +78,41 @@ use ts_rs::TS;
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
 pub enum CaptureEventType {
+    /// Server-classified edit to documentation/prose.
     WriteDoc,
+    /// Server-classified edit to executable source code.
     WriteCode,
+    /// Editor activity moved between documentation and code contexts.
     SwitchPane,
+    /// Duration summary for a documentation/prose activity interval.
     DocSession,
+    /// File save observed by the editor.
     Save,
+    /// Compile/build task started.
     Compile,
+    /// Debug/run session started.
     Run,
+    /// Capture or activity session started.
     SessionStart,
+    /// Capture or activity session ended.
     SessionEnd,
+    /// Compile/build task ended.
     CompileEnd,
+    /// Debug/run session ended.
     RunEnd,
+    /// Study task started by an external study workflow.
     TaskStart,
+    /// Study task submitted by an external study workflow.
     TaskSubmit,
+    /// Debugging study task started by an external study workflow.
     DebugTaskStart,
+    /// Debugging study task submitted by an external study workflow.
     DebugTaskSubmit,
+    /// Collaboration handoff interval started.
     HandoffStart,
+    /// Collaboration handoff interval ended.
     HandoffEnd,
+    /// A built-in reflection prompt was inserted into the active editor.
     ReflectionPromptInserted,
 }
 
@@ -160,11 +177,16 @@ pub mod event_types {
 /// `main.rs`; this module stays agnostic.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaptureConfig {
+    /// PostgreSQL host name or address.
     pub host: String,
+    /// Optional PostgreSQL port. Uses libpq's default when omitted.
     #[serde(default)]
     pub port: Option<u16>,
+    /// PostgreSQL user name.
     pub user: String,
+    /// PostgreSQL password. Never included in redacted summaries.
     pub password: String,
+    /// PostgreSQL database name.
     pub dbname: String,
     /// Optional: application-level identifier for this deployment (e.g., course
     /// code or semester). Not stored in the DB directly; callers can embed this
@@ -241,13 +263,21 @@ fn required_env_var(name: &str) -> Result<String, String> {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[ts(export)]
 pub struct CaptureStatus {
+    /// True when the capture worker is configured and accepting events.
     pub enabled: bool,
+    /// Worker state: `starting`, `database`, `fallback`, or `disabled`.
     pub state: String,
+    /// Number of events accepted into the worker queue.
     pub queued_events: u64,
+    /// Number of events inserted into PostgreSQL.
     pub persisted_events: u64,
+    /// Number of events written to the local JSONL fallback.
     pub fallback_events: u64,
+    /// Number of failed enqueue or fallback-write attempts.
     pub failed_events: u64,
+    /// Most recent capture error, if one is known.
     pub last_error: Option<String>,
+    /// Local JSONL fallback path when fallback capture is configured.
     pub fallback_path: Option<PathBuf>,
 }
 
@@ -282,10 +312,11 @@ impl CaptureStatus {
 /// The in-memory representation of a single capture event.
 #[derive(Debug, Clone)]
 pub struct CaptureEvent {
+    /// Pseudonymous participant UUID supplied by the extension.
     pub user_id: String,
-    pub assignment_id: Option<String>,
-    pub group_id: Option<String>,
+    /// Raw file path when path hashing is disabled.
     pub file_path: Option<String>,
+    /// Canonical type of the captured event.
     pub event_type: CaptureEventType,
     /// When the event occurred, in UTC.
     pub timestamp: DateTime<Utc>,
@@ -297,8 +328,6 @@ impl CaptureEvent {
     /// Convenience constructor when the caller already has a timestamp.
     pub fn new(
         user_id: String,
-        assignment_id: Option<String>,
-        group_id: Option<String>,
         file_path: Option<String>,
         event_type: CaptureEventType,
         timestamp: DateTime<Utc>,
@@ -306,8 +335,6 @@ impl CaptureEvent {
     ) -> Self {
         Self {
             user_id,
-            assignment_id,
-            group_id,
             file_path,
             event_type,
             timestamp,
@@ -318,21 +345,11 @@ impl CaptureEvent {
     /// Convenience constructor which uses the current time.
     pub fn now(
         user_id: String,
-        assignment_id: Option<String>,
-        group_id: Option<String>,
         file_path: Option<String>,
         event_type: CaptureEventType,
         data: serde_json::Value,
     ) -> Self {
-        Self::new(
-            user_id,
-            assignment_id,
-            group_id,
-            file_path,
-            event_type,
-            Utc::now(),
-            data,
-        )
+        Self::new(user_id, file_path, event_type, Utc::now(), data)
     }
 }
 
@@ -415,12 +432,8 @@ impl EventCapture {
                             // them into the database.
                             while let Some(event) = rx.recv().await {
                                 debug!(
-                                    "Capture: inserting event: type={}, user_id={}, assignment_id={:?}, group_id={:?}, file_path={:?}",
-                                    event.event_type,
-                                    event.user_id,
-                                    event.assignment_id,
-                                    event.group_id,
-                                    event.file_path
+                                    "Capture: inserting event: type={}, user_id={}, file_path={:?}",
+                                    event.event_type, event.user_id, event.file_path
                                 );
 
                                 if let Err(err) = insert_event(&client, &event).await {
@@ -496,8 +509,8 @@ impl EventCapture {
     /// Enqueue an event for insertion. This is non-blocking.
     pub fn log(&self, event: CaptureEvent) {
         debug!(
-            "Capture: queueing event: type={}, user_id={}, assignment_id={:?}, group_id={:?}, file_path={:?}",
-            event.event_type, event.user_id, event.assignment_id, event.group_id, event.file_path
+            "Capture: queueing event: type={}, user_id={}, file_path={:?}",
+            event.event_type, event.user_id, event.file_path
         );
 
         if let Err(err) = self.tx.send(event) {
@@ -571,8 +584,6 @@ fn append_fallback_event(fallback_path: &Path, event: &CaptureEvent) -> io::Resu
         "fallback_timestamp": Utc::now().to_rfc3339(),
         "event": {
             "user_id": event.user_id,
-            "assignment_id": event.assignment_id,
-            "group_id": event.group_id,
             "file_path": event.file_path,
             "event_type": event.event_type.as_str(),
             "timestamp": event.timestamp.to_rfc3339(),
@@ -672,15 +683,11 @@ async fn insert_rich_event(
     let event_id = capture_data_str(&event.data, &["event_id"]);
     let sequence_number = capture_data_i64(&event.data, "sequence_number");
     let schema_version = capture_data_i32(&event.data, "schema_version");
-    let condition = capture_data_str(&event.data, &["condition"]);
-    let course_id = capture_data_str(&event.data, &["course_id"]);
-    let task_id = capture_data_str(&event.data, &["task_id"]);
     let session_id = capture_data_str(&event.data, &["session_id"]);
     let event_source = capture_data_str(&event.data, &["event_source"]);
     let language_id = capture_data_str(&event.data, &["language_id", "languageId"]);
     let file_hash = capture_data_str(&event.data, &["file_hash"]);
     let path_privacy = capture_data_str(&event.data, &["path_privacy"]);
-    let capture_mode = capture_data_str(&event.data, &["capture_mode"]);
     let client_timestamp_ms = capture_data_i64(&event.data, "client_timestamp_ms");
     let client_tz_offset_min = capture_data_i32(&event.data, "client_tz_offset_min");
     let server_timestamp_ms = capture_data_i64(&event.data, "server_timestamp_ms")
@@ -697,33 +704,27 @@ async fn insert_rich_event(
         .execute(
             "INSERT INTO events \
              (event_id, sequence_number, schema_version, \
-              user_id, assignment_id, group_id, condition, course_id, task_id, session_id, \
-              event_source, language_id, file_hash, file_path, path_privacy, capture_mode, \
+              user_id, session_id, \
+              event_source, language_id, file_hash, file_path, path_privacy, \
               event_type, timestamp, client_timestamp_ms, client_tz_offset_min, \
               server_timestamp_ms, data) \
              VALUES \
-             ($1, $2, $3, \
-              $4, $5, $6, $7, $8, $9, $10, \
-              $11, $12, $13, $14, $15, $16, \
-              $17, $18::text::timestamptz, $19, $20, \
-              $21, $22::text::jsonb)",
+              ($1, $2, $3, \
+              $4, $5, \
+              $6, $7, $8, $9, $10, \
+              $11, $12::text::timestamptz, $13, $14, \
+              $15, $16::text::jsonb)",
             &[
                 &event_id,
                 &sequence_number,
                 &schema_version,
                 &event.user_id,
-                &event.assignment_id,
-                &event.group_id,
-                &condition,
-                &course_id,
-                &task_id,
                 &session_id,
                 &event_source,
                 &language_id,
                 &file_hash,
                 &event.file_path,
                 &path_privacy,
-                &capture_mode,
                 &event_type,
                 &timestamp,
                 &client_timestamp_ms,
@@ -751,12 +752,10 @@ async fn insert_legacy_event(
     client
         .execute(
             "INSERT INTO events \
-             (user_id, assignment_id, group_id, file_path, event_type, timestamp, data) \
-             VALUES ($1, $2, $3, $4, $5, $6::text::timestamptz, $7::text::jsonb)",
+             (user_id, file_path, event_type, timestamp, data) \
+             VALUES ($1, $2, $3, $4::text::timestamptz, $5::text::jsonb)",
             &[
                 &event.user_id,
-                &event.assignment_id,
-                &event.group_id,
                 &event.file_path,
                 &event_type,
                 &timestamp,
@@ -813,8 +812,6 @@ mod tests {
 
         let ev = CaptureEvent::new(
             "user123".to_string(),
-            Some("lab1".to_string()),
-            Some("groupA".to_string()),
             Some("/path/to/file.rs".to_string()),
             event_types::WRITE_DOC,
             ts,
@@ -822,8 +819,6 @@ mod tests {
         );
 
         assert_eq!(ev.user_id, "user123");
-        assert_eq!(ev.assignment_id.as_deref(), Some("lab1"));
-        assert_eq!(ev.group_id.as_deref(), Some("groupA"));
         assert_eq!(ev.file_path.as_deref(), Some("/path/to/file.rs"));
         assert_eq!(ev.event_type, event_types::WRITE_DOC);
         assert_eq!(ev.timestamp, ts);
@@ -836,16 +831,12 @@ mod tests {
         let ev = CaptureEvent::now(
             "user123".to_string(),
             None,
-            None,
-            None,
             event_types::SAVE,
             json!({ "reason": "manual" }),
         );
         let after = Utc::now();
 
         assert_eq!(ev.user_id, "user123");
-        assert!(ev.assignment_id.is_none());
-        assert!(ev.group_id.is_none());
         assert!(ev.file_path.is_none());
         assert_eq!(ev.event_type, event_types::SAVE);
         assert_eq!(ev.data, json!({ "reason": "manual" }));
@@ -967,15 +958,11 @@ mod tests {
             "event_id",
             "sequence_number",
             "schema_version",
-            "condition",
-            "course_id",
-            "task_id",
             "session_id",
             "event_source",
             "language_id",
             "file_hash",
             "path_privacy",
-            "capture_mode",
             "client_timestamp_ms",
             "client_tz_offset_min",
             "server_timestamp_ms",
@@ -1020,15 +1007,11 @@ mod tests {
             "event_id": expected_event_id,
             "sequence_number": 42,
             "schema_version": 2,
-            "condition": "treatment",
-            "course_id": "ece-integration",
-            "task_id": "capture-schema-test",
             "session_id": expected_session_id,
             "event_source": "integration_test",
             "language_id": "rust",
             "file_hash": expected_file_hash,
             "path_privacy": "sha256",
-            "capture_mode": "treatment",
             "client_timestamp_ms": expected_client_timestamp_ms,
             "client_tz_offset_min": 360,
             "server_timestamp_ms": expected_server_timestamp_ms,
@@ -1037,8 +1020,6 @@ mod tests {
         });
         let event = CaptureEvent::now(
             expected_user_id.clone(),
-            Some("hw-integration".to_string()),
-            Some("group-integration".to_string()),
             None,
             event_types::WRITE_DOC,
             expected_data.clone(),
@@ -1057,10 +1038,10 @@ mod tests {
             match client
                 .query_one(
                     r#"
-                    SELECT user_id, assignment_id, group_id, file_path, event_type,
-                           event_id, sequence_number, schema_version, condition, course_id,
-                           task_id, session_id, event_source, language_id, file_hash,
-                           path_privacy, capture_mode, client_timestamp_ms,
+                    SELECT user_id, file_path, event_type,
+                           event_id, sequence_number, schema_version,
+                           session_id, event_source, language_id, file_hash,
+                           path_privacy, client_timestamp_ms,
                            client_tz_offset_min, server_timestamp_ms, data::text
                     FROM events
                     WHERE event_id = $1
@@ -1082,45 +1063,33 @@ mod tests {
         };
 
         let user_id: String = row.get("user_id");
-        let assignment_id: Option<String> = row.get(1);
-        let group_id: Option<String> = row.get(2);
-        let file_path: Option<String> = row.get(3);
-        let event_type: String = row.get(4);
-        let event_id: Option<String> = row.get(5);
-        let sequence_number: Option<i64> = row.get(6);
-        let schema_version: Option<i32> = row.get(7);
-        let condition: Option<String> = row.get(8);
-        let course_id: Option<String> = row.get(9);
-        let task_id: Option<String> = row.get(10);
-        let session_id: Option<String> = row.get(11);
-        let event_source: Option<String> = row.get(12);
-        let language_id: Option<String> = row.get(13);
-        let file_hash: Option<String> = row.get(14);
-        let path_privacy: Option<String> = row.get(15);
-        let capture_mode: Option<String> = row.get(16);
-        let client_timestamp_ms: Option<i64> = row.get(17);
-        let client_tz_offset_min: Option<i32> = row.get(18);
-        let server_timestamp_ms: Option<i64> = row.get(19);
-        let data_text: String = row.get(20);
+        let file_path: Option<String> = row.get(1);
+        let event_type: String = row.get(2);
+        let event_id: Option<String> = row.get(3);
+        let sequence_number: Option<i64> = row.get(4);
+        let schema_version: Option<i32> = row.get(5);
+        let session_id: Option<String> = row.get(6);
+        let event_source: Option<String> = row.get(7);
+        let language_id: Option<String> = row.get(8);
+        let file_hash: Option<String> = row.get(9);
+        let path_privacy: Option<String> = row.get(10);
+        let client_timestamp_ms: Option<i64> = row.get(11);
+        let client_tz_offset_min: Option<i32> = row.get(12);
+        let server_timestamp_ms: Option<i64> = row.get(13);
+        let data_text: String = row.get(14);
         let data_value: serde_json::Value = serde_json::from_str(&data_text)?;
 
         assert_eq!(user_id, expected_user_id);
-        assert_eq!(assignment_id.as_deref(), Some("hw-integration"));
-        assert_eq!(group_id.as_deref(), Some("group-integration"));
         assert!(file_path.is_none());
         assert_eq!(event_type, event_types::WRITE_DOC.as_str());
         assert_eq!(event_id.as_deref(), Some(expected_event_id.as_str()));
         assert_eq!(sequence_number, Some(42));
         assert_eq!(schema_version, Some(2));
-        assert_eq!(condition.as_deref(), Some("treatment"));
-        assert_eq!(course_id.as_deref(), Some("ece-integration"));
-        assert_eq!(task_id.as_deref(), Some("capture-schema-test"));
         assert_eq!(session_id.as_deref(), Some(expected_session_id.as_str()));
         assert_eq!(event_source.as_deref(), Some("integration_test"));
         assert_eq!(language_id.as_deref(), Some("rust"));
         assert_eq!(file_hash.as_deref(), Some(expected_file_hash.as_str()));
         assert_eq!(path_privacy.as_deref(), Some("sha256"));
-        assert_eq!(capture_mode.as_deref(), Some("treatment"));
         assert_eq!(client_timestamp_ms, Some(expected_client_timestamp_ms));
         assert_eq!(client_tz_offset_min, Some(360));
         assert_eq!(server_timestamp_ms, Some(expected_server_timestamp_ms));

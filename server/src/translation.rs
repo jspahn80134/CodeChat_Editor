@@ -437,20 +437,29 @@ struct TranslationTask {
     /// Has the full (non-diff) version of the current file been sent? Don't
     /// send diffs until this is sent.
     sent_full: bool,
+    /// Most recent capture metadata supplied by the IDE. Server-generated
+    /// capture events reuse this so translated write events retain the same
+    /// participant/session identity as the extension events.
     capture_context: CaptureContext,
 }
 
+/// Participant and session metadata remembered from client capture events.
+///
+/// The translation layer generates `write_doc`/`write_code` events after it
+/// has parsed CodeChat content. Those events should share the same pseudonymous
+/// participant and capture session as the extension-side events, but the server
+/// should not ask students for course/group/assignment/task setup values.
 #[derive(Clone, Debug, Default)]
 struct CaptureContext {
+    /// Pseudonymous participant UUID from the latest client capture event.
     user_id: Option<String>,
-    assignment_id: Option<String>,
-    group_id: Option<String>,
-    condition: Option<String>,
-    course_id: Option<String>,
-    task_id: Option<String>,
+    /// Origin of the client event stream, such as the VS Code extension.
     event_source: Option<String>,
+    /// Extension session UUID carried in the event data payload.
     session_id: Option<String>,
+    /// Client timezone offset in minutes, retained for generated write events.
     client_tz_offset_min: Option<i32>,
+    /// Capture payload schema version from the extension.
     schema_version: Option<i32>,
 }
 
@@ -458,21 +467,6 @@ impl CaptureContext {
     fn update_from_wire(&mut self, wire: &CaptureEventWire) {
         if !wire.user_id.trim().is_empty() {
             self.user_id = Some(wire.user_id.clone());
-        }
-        if let Some(assignment_id) = &wire.assignment_id {
-            self.assignment_id = Some(assignment_id.clone());
-        }
-        if let Some(group_id) = &wire.group_id {
-            self.group_id = Some(group_id.clone());
-        }
-        if let Some(condition) = &wire.condition {
-            self.condition = Some(condition.clone());
-        }
-        if let Some(course_id) = &wire.course_id {
-            self.course_id = Some(course_id.clone());
-        }
-        if let Some(task_id) = &wire.task_id {
-            self.task_id = Some(task_id.clone());
         }
         if let Some(event_source) = &wire.event_source {
             self.event_source = Some(event_source.clone());
@@ -516,11 +510,6 @@ impl CaptureContext {
             sequence_number: None,
             schema_version: self.schema_version,
             user_id: self.user_id.clone()?,
-            assignment_id: self.assignment_id.clone(),
-            group_id: self.group_id.clone(),
-            condition: self.condition.clone(),
-            course_id: self.course_id.clone(),
-            task_id: self.task_id.clone(),
             event_source: self.event_source.clone(),
             language_id: None,
             file_hash: None,

@@ -1,9 +1,11 @@
 -- CodeChat capture event schema for dissertation analysis.
 --
--- This script is safe to run on an existing legacy `events` table. It adds the
--- richer typed metadata columns, converts `timestamp` and `data` to analysis-
--- friendly PostgreSQL types, and backfills typed metadata from existing JSON
--- payloads where possible.
+-- This script updates an existing legacy `events` table to the lean capture
+-- schema used for dissertation telemetry. It converts `timestamp` and `data` to
+-- analysis-friendly PostgreSQL types and backfills typed telemetry from
+-- existing JSON payloads where possible. Study metadata such as course, group,
+-- assignment, condition, and task is intentionally omitted: those values are
+-- joined during analysis from researcher-managed participant/date mappings.
 
 BEGIN;
 
@@ -13,18 +15,12 @@ CREATE TABLE IF NOT EXISTS public.events (
     sequence_number     BIGINT,
     schema_version      INTEGER,
     user_id             TEXT NOT NULL,
-    assignment_id       TEXT,
-    group_id            TEXT,
-    condition           TEXT,
-    course_id           TEXT,
-    task_id             TEXT,
     session_id          TEXT,
     event_source        TEXT,
     language_id         TEXT,
     file_hash           TEXT,
     file_path           TEXT,
     path_privacy        TEXT,
-    capture_mode        TEXT,
     event_type          TEXT NOT NULL,
     "timestamp"         TIMESTAMPTZ NOT NULL DEFAULT now(),
     client_timestamp_ms BIGINT,
@@ -37,19 +33,22 @@ CREATE TABLE IF NOT EXISTS public.events (
 ALTER TABLE public.events ADD COLUMN IF NOT EXISTS event_id TEXT;
 ALTER TABLE public.events ADD COLUMN IF NOT EXISTS sequence_number BIGINT;
 ALTER TABLE public.events ADD COLUMN IF NOT EXISTS schema_version INTEGER;
-ALTER TABLE public.events ADD COLUMN IF NOT EXISTS condition TEXT;
-ALTER TABLE public.events ADD COLUMN IF NOT EXISTS course_id TEXT;
-ALTER TABLE public.events ADD COLUMN IF NOT EXISTS task_id TEXT;
 ALTER TABLE public.events ADD COLUMN IF NOT EXISTS session_id TEXT;
 ALTER TABLE public.events ADD COLUMN IF NOT EXISTS event_source TEXT;
 ALTER TABLE public.events ADD COLUMN IF NOT EXISTS language_id TEXT;
 ALTER TABLE public.events ADD COLUMN IF NOT EXISTS file_hash TEXT;
 ALTER TABLE public.events ADD COLUMN IF NOT EXISTS path_privacy TEXT;
-ALTER TABLE public.events ADD COLUMN IF NOT EXISTS capture_mode TEXT;
 ALTER TABLE public.events ADD COLUMN IF NOT EXISTS client_timestamp_ms BIGINT;
 ALTER TABLE public.events ADD COLUMN IF NOT EXISTS client_tz_offset_min INTEGER;
 ALTER TABLE public.events ADD COLUMN IF NOT EXISTS server_timestamp_ms BIGINT;
 ALTER TABLE public.events ADD COLUMN IF NOT EXISTS inserted_at TIMESTAMPTZ NOT NULL DEFAULT now();
+
+ALTER TABLE public.events DROP COLUMN IF EXISTS assignment_id;
+ALTER TABLE public.events DROP COLUMN IF EXISTS group_id;
+ALTER TABLE public.events DROP COLUMN IF EXISTS condition;
+ALTER TABLE public.events DROP COLUMN IF EXISTS course_id;
+ALTER TABLE public.events DROP COLUMN IF EXISTS task_id;
+ALTER TABLE public.events DROP COLUMN IF EXISTS capture_mode;
 
 DO $$
 DECLARE
@@ -114,9 +113,6 @@ SET
             THEN (data->>'schema_version')::integer
         END
     ),
-    condition = COALESCE(condition, NULLIF(data->>'condition', '')),
-    course_id = COALESCE(course_id, NULLIF(data->>'course_id', '')),
-    task_id = COALESCE(task_id, NULLIF(data->>'task_id', '')),
     session_id = COALESCE(session_id, NULLIF(data->>'session_id', '')),
     event_source = COALESCE(event_source, NULLIF(data->>'event_source', '')),
     language_id = COALESCE(
@@ -126,7 +122,6 @@ SET
     ),
     file_hash = COALESCE(file_hash, NULLIF(data->>'file_hash', '')),
     path_privacy = COALESCE(path_privacy, NULLIF(data->>'path_privacy', '')),
-    capture_mode = COALESCE(capture_mode, NULLIF(data->>'capture_mode', '')),
     client_timestamp_ms = COALESCE(
         client_timestamp_ms,
         CASE
@@ -157,7 +152,7 @@ CREATE INDEX IF NOT EXISTS events_type_timestamp_idx
     ON public.events (event_type, "timestamp");
 
 CREATE INDEX IF NOT EXISTS events_participant_session_idx
-    ON public.events (user_id, assignment_id, session_id, task_id);
+    ON public.events (user_id, session_id);
 
 CREATE INDEX IF NOT EXISTS events_file_hash_idx
     ON public.events (file_hash)
@@ -171,14 +166,11 @@ CREATE INDEX IF NOT EXISTS events_data_gin_idx
     ON public.events USING GIN (data);
 
 COMMENT ON TABLE public.events IS
-    'CodeChat dissertation capture events with typed analysis metadata and event-specific JSONB payloads.';
-COMMENT ON COLUMN public.events.user_id IS 'Participant identifier supplied by capture settings.';
-COMMENT ON COLUMN public.events.assignment_id IS 'Assignment or lab identifier supplied by capture settings.';
-COMMENT ON COLUMN public.events.group_id IS 'Study group, section, or cohort identifier.';
-COMMENT ON COLUMN public.events.condition IS 'Study condition, such as treatment, comparison, or capture-only.';
+    'CodeChat dissertation capture events. Course, group, assignment, condition, and task context are joined during analysis from participant/date mappings.';
+COMMENT ON COLUMN public.events.user_id IS 'Pseudonymous participant UUID generated or supplied by the VS Code extension.';
 COMMENT ON COLUMN public.events.session_id IS 'Capture session UUID emitted by the VS Code extension.';
 COMMENT ON COLUMN public.events.file_hash IS 'SHA-256 hash of the file path when path hashing is enabled.';
 COMMENT ON COLUMN public.events.file_path IS 'Raw captured file path; NULL when path hashing is enabled.';
-COMMENT ON COLUMN public.events.data IS 'Event-specific JSON payload. Duplicates typed metadata for portable fallback exports.';
+COMMENT ON COLUMN public.events.data IS 'Event-specific JSON payload. Duplicates typed telemetry metadata for portable fallback exports.';
 
 COMMIT;

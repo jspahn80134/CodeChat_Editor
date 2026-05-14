@@ -191,22 +191,29 @@ function classifyAtPosition(
     return "code";
 }
 
+// Event-specific payload attached to a capture event. Study metadata such as
+// group, course, assignment, and condition is intentionally excluded from the
+// student-facing capture settings; analysis can join those values later from a
+// researcher-managed participant/date mapping.
 type CaptureEventData = Record<string, unknown>;
 
-type CaptureMode = "treatment" | "comparison" | "capture-only";
+// Event names are generated from the Rust `CaptureEventType` enum, keeping the
+// extension and server in sync without re-declaring the string union here.
 type CaptureEventType = CaptureEventWire["event_type"];
 
+// Student-facing capture settings. The setup is intentionally small: students
+// give consent, toggle capture, and receive or reuse a pseudonymous participant
+// UUID. Assignment, course, group, and study-condition metadata are inferred
+// during analysis from that participant ID and event timestamps.
 interface StudySettings {
+    // True when the student wants capture enabled for the current work session.
     enabled: boolean;
+    // True after the student has consented to study capture.
     consentEnabled: boolean;
+    // Pseudonymous UUID used as the event user ID; generated when absent.
     participantId: string;
-    assignmentId?: string;
-    groupId?: string;
-    condition: CaptureMode;
-    courseId?: string;
-    taskId?: string;
+    // True to avoid storing raw local paths in capture events.
     hashFilePaths: boolean;
-    promptTemplates: string[];
 }
 
 const CAPTURE_SCHEMA_VERSION = 2;
@@ -217,15 +224,29 @@ const DEFAULT_REFLECTION_PROMPTS = [
     "What would another developer need to know before maintaining this?",
 ];
 
+// Output channel used for capture diagnostics that should not interrupt normal
+// editor use.
 let capture_output_channel: vscode.OutputChannel | undefined;
+// True after the first failed send is logged to the console, suppressing repeat
+// console warnings while still writing detailed failures to the output channel.
 let captureFailureLogged = false;
+// True once the CodeChat Client and Server have completed enough startup
+// handshake work for capture events to be accepted.
 let captureTransportReady = false;
+// True after a capture-enabled extension session has emitted `session_start`.
 let extensionCaptureSessionStarted = false;
+// Monotonic per-extension event sequence number used to order events produced
+// by this VS Code session.
 let captureSequenceNumber = 0;
+// Status bar item that reports capture health and opens the capture controls.
 let capture_status_bar_item: vscode.StatusBarItem | undefined;
+// Timer used to refresh capture status from the running server.
 let capture_status_timer: NodeJS.Timeout | undefined;
 
-// Simple classification of what the user is currently doing.
+// Simple classification of what the user is currently doing. `doc` means
+// prose/documentation activity, whether in a Markdown/RST document or a
+// CodeChat doc block; write events from the server provide the more precise
+// doc-block classification when it is available.
 type ActivityKind = "doc" | "code" | "other";
 
 // Language IDs that we treat as "documentation" for the dissertation metrics.
@@ -250,33 +271,11 @@ function optionalString(value: unknown): string | undefined {
 
 function loadStudySettings(): StudySettings {
     const config = vscode.workspace.getConfiguration("CodeChatEditor.Capture");
-    const modeValue = optionalString(config.get("Mode"));
-    const condition: CaptureMode =
-        modeValue === "comparison" || modeValue === "capture-only"
-            ? modeValue
-            : "treatment";
-    const promptTemplates = config.get("PromptTemplates");
-
     return {
         enabled: config.get<boolean>("Enabled", false),
         consentEnabled: config.get<boolean>("ConsentEnabled", false),
         participantId: optionalString(config.get("ParticipantId")) ?? "",
-        assignmentId: optionalString(config.get("AssignmentId")),
-        groupId: optionalString(config.get("GroupId")),
-        condition,
-        courseId: optionalString(config.get("CourseId")),
-        taskId: optionalString(config.get("TaskId")),
         hashFilePaths: config.get<boolean>("HashFilePaths", true),
-        promptTemplates:
-            Array.isArray(promptTemplates) && promptTemplates.length > 0
-                ? promptTemplates
-                      .filter(
-                          (prompt): prompt is string =>
-                              typeof prompt === "string",
-                      )
-                      .map((prompt) => prompt.trim())
-                      .filter((prompt) => prompt.length > 0)
-                : DEFAULT_REFLECTION_PROMPTS,
     };
 }
 
@@ -287,10 +286,31 @@ function captureDisabledReason(settings: StudySettings): string | undefined {
     if (!settings.consentEnabled) {
         return "waiting for consent";
     }
-    if (settings.participantId.length === 0) {
-        return "participant id is not configured";
-    }
     return undefined;
+}
+
+async function updateCaptureSetting(
+    name: string,
+    value: string | boolean,
+): Promise<void> {
+    const config = vscode.workspace.getConfiguration("CodeChatEditor.Capture");
+    await config.update(name, value, vscode.ConfigurationTarget.Global);
+}
+
+async function ensureParticipantId(): Promise<string> {
+    const config = vscode.workspace.getConfiguration("CodeChatEditor.Capture");
+    const existing = optionalString(config.get("ParticipantId"));
+    if (existing !== undefined) {
+        return existing;
+    }
+
+    const generated = crypto.randomUUID();
+    await config.update(
+        "ParticipantId",
+        generated,
+        vscode.ConfigurationTarget.Global,
+    );
+    return generated;
 }
 
 function hashText(value: string): string {
@@ -326,17 +346,13 @@ async function sendCaptureEvent(
         updateCaptureStatusBar(`Capture: ${disabledReason}`, disabledReason);
         return;
     }
+    const participantId = await ensureParticipantId();
     const fileFields = buildFileFields(filePath, settings);
     const payload: CaptureEventWire = {
         event_id: crypto.randomUUID(),
         sequence_number: BigInt(++captureSequenceNumber),
         schema_version: CAPTURE_SCHEMA_VERSION,
-        user_id: settings.participantId,
-        assignment_id: settings.assignmentId,
-        group_id: settings.groupId,
-        condition: settings.condition,
-        course_id: settings.courseId,
-        task_id: settings.taskId,
+        user_id: participantId,
         event_source: CAPTURE_EVENT_SOURCE,
         ...fileFields,
         event_type: eventType,
@@ -345,7 +361,6 @@ async function sendCaptureEvent(
         data: {
             ...data,
             session_id: CAPTURE_SESSION_ID,
-            capture_mode: settings.condition,
             path_privacy: settings.hashFilePaths ? "sha256" : "plain",
         },
     };
@@ -366,7 +381,7 @@ async function sendCaptureEvent(
             stringifyCapturePayload(payload),
         );
         captureFailureLogged = false;
-        void refreshCaptureStatus();
+        await refreshCaptureStatus();
     } catch (err) {
         reportCaptureFailure(err instanceof Error ? err.message : String(err));
     }
@@ -457,14 +472,96 @@ async function refreshCaptureStatus(): Promise<void> {
     }
 }
 
+// A status-bar QuickPick action. Each item owns the async work needed after the
+// student chooses it, keeping the capture UI small and easy to scan.
+interface CaptureStatusAction extends vscode.QuickPickItem {
+    run: () => Promise<void>;
+}
+
+function captureStatusDetails(): string {
+    const tooltip = capture_status_bar_item?.tooltip;
+    return typeof tooltip === "string"
+        ? tooltip
+        : (tooltip?.value ?? "Capture status unavailable");
+}
+
+async function setCaptureEnabled(enabled: boolean): Promise<void> {
+    const active = vscode.window.activeTextEditor;
+    const filePath = active?.document.fileName;
+    const settings = loadStudySettings();
+
+    if (enabled) {
+        await ensureParticipantId();
+        if (!settings.consentEnabled) {
+            await updateCaptureSetting("ConsentEnabled", true);
+        }
+        await updateCaptureSetting("Enabled", true);
+        extensionCaptureSessionStarted = false;
+        await startExtensionCaptureSession(filePath);
+        vscode.window.showInformationMessage("CodeChat capture is enabled.");
+    } else {
+        await endExtensionCaptureSession(filePath, "capture_disabled");
+        await updateCaptureSetting("Enabled", false);
+        vscode.window.showInformationMessage("CodeChat capture is off.");
+    }
+
+    await refreshCaptureStatus();
+}
+
+async function copyParticipantId(): Promise<void> {
+    const participantId = await ensureParticipantId();
+    await vscode.env.clipboard.writeText(participantId);
+    vscode.window.showInformationMessage(
+        "CodeChat capture participant ID copied.",
+    );
+}
+
 async function showCaptureStatus(): Promise<void> {
     await refreshCaptureStatus();
-    const tooltip = capture_status_bar_item?.tooltip;
-    vscode.window.showInformationMessage(
-        typeof tooltip === "string"
-            ? tooltip
-            : (tooltip?.value ?? "Capture status unavailable"),
+    const settings = loadStudySettings();
+    const actions: CaptureStatusAction[] = [];
+
+    if (!settings.consentEnabled) {
+        actions.push({
+            label: "Give Consent and Enable Capture",
+            description: "Generate a pseudonymous participant ID if needed.",
+            run: () => setCaptureEnabled(true),
+        });
+    } else if (settings.enabled) {
+        actions.push({
+            label: "Turn Capture Off",
+            description: "Stop recording study events for this editor.",
+            run: () => setCaptureEnabled(false),
+        });
+    } else {
+        actions.push({
+            label: "Turn Capture On",
+            description: "Resume recording study events for this editor.",
+            run: () => setCaptureEnabled(true),
+        });
+    }
+
+    actions.push(
+        {
+            label: "Copy Participant ID",
+            description: settings.participantId || "Generate a new UUID.",
+            run: copyParticipantId,
+        },
+        {
+            label: "Show Capture Details",
+            description: captureStatusDetails().split("\n")[0],
+            run: async () => {
+                vscode.window.showInformationMessage(captureStatusDetails());
+            },
+        },
     );
+
+    const selected = await vscode.window.showQuickPick(actions, {
+        placeHolder: "Manage CodeChat capture",
+    });
+    if (selected !== undefined) {
+        await selected.run();
+    }
 }
 
 async function recordStudyLifecycleEvent(
@@ -498,21 +595,17 @@ function reflectionPromptText(languageId: string, prompt: string): string {
 }
 
 async function insertReflectionPrompt(): Promise<void> {
-    const settings = loadStudySettings();
-    if (settings.condition !== "treatment") {
-        vscode.window.showInformationMessage(
-            "Reflection prompts are disabled for this capture mode.",
-        );
-        return;
-    }
     const editor = vscode.window.activeTextEditor;
     if (editor === undefined) {
         vscode.window.showInformationMessage("Open a text editor first.");
         return;
     }
-    const prompt = await vscode.window.showQuickPick(settings.promptTemplates, {
-        placeHolder: "Select a reflection prompt",
-    });
+    const prompt = await vscode.window.showQuickPick(
+        DEFAULT_REFLECTION_PROMPTS,
+        {
+            placeHolder: "Select a reflection prompt",
+        },
+    );
     if (prompt === undefined) {
         return;
     }
@@ -537,13 +630,56 @@ async function startExtensionCaptureSession(filePath?: string) {
     if (extensionCaptureSessionStarted) {
         return;
     }
+    if (captureDisabledReason(loadStudySettings()) !== undefined) {
+        return;
+    }
     extensionCaptureSessionStarted = true;
     await sendCaptureEvent("session_start", filePath, {
         mode: "vscode_extension",
     });
 }
 
-// Update activity state, emit switch + doc\_session events as needed.
+async function endExtensionCaptureSession(
+    filePath: string | undefined,
+    closedBy: string,
+): Promise<void> {
+    if (!extensionCaptureSessionStarted) {
+        return;
+    }
+    await closeDocSession(filePath, closedBy);
+    await sendCaptureEvent("session_end", filePath, {
+        mode: "vscode_extension",
+        closed_by: closedBy,
+    });
+    extensionCaptureSessionStarted = false;
+}
+
+async function closeDocSession(
+    filePath: string | undefined,
+    closedBy: string,
+): Promise<void> {
+    if (docSessionStart === null) {
+        return;
+    }
+
+    const durationMs = Date.now() - docSessionStart;
+    docSessionStart = null;
+    await sendCaptureEvent("doc_session", filePath, {
+        duration_ms: durationMs,
+        duration_seconds: durationMs / 1000.0,
+        closed_by: closedBy,
+    });
+    await sendCaptureEvent("session_end", filePath, {
+        mode: "doc",
+        closed_by: closedBy,
+    });
+}
+
+// Update activity state and emit switch/doc-session events. Markdown/RST prose
+// and CodeChat doc-block edits are both documentation activity for analysis;
+// server-side write events classify CodeChat doc-block edits precisely, while
+// this extension-side activity tracker uses the best cursor/file context
+// available before translation.
 function noteActivity(kind: ActivityKind, filePath?: string) {
     const now = Date.now();
 
@@ -552,7 +688,7 @@ function noteActivity(kind: ActivityKind, filePath?: string) {
         if (docSessionStart === null) {
             // Starting a new reflective-writing session.
             docSessionStart = now;
-            void sendCaptureEvent("session_start", filePath, {
+            sendCaptureEvent("session_start", filePath, {
                 mode: "doc",
             });
         }
@@ -561,11 +697,11 @@ function noteActivity(kind: ActivityKind, filePath?: string) {
             // Ending a reflective-writing session.
             const durationMs = now - docSessionStart;
             docSessionStart = null;
-            void sendCaptureEvent("doc_session", filePath, {
+            sendCaptureEvent("doc_session", filePath, {
                 duration_ms: durationMs,
                 duration_seconds: durationMs / 1000.0,
             });
-            void sendCaptureEvent("session_end", filePath, {
+            sendCaptureEvent("session_end", filePath, {
                 mode: "doc",
             });
         }
@@ -578,7 +714,7 @@ function noteActivity(kind: ActivityKind, filePath?: string) {
         docOrCode(kind) &&
         kind !== lastActivityKind
     ) {
-        void sendCaptureEvent("switch_pane", filePath, {
+        sendCaptureEvent("switch_pane", filePath, {
             from: lastActivityKind,
             to: kind,
         });
@@ -603,7 +739,7 @@ export const activate = (context: vscode.ExtensionContext) => {
     capture_status_bar_item.command = "extension.codeChatCaptureStatus";
     context.subscriptions.push(capture_status_bar_item);
     capture_status_timer = setInterval(() => {
-        void refreshCaptureStatus();
+        refreshCaptureStatus();
     }, 5000);
     context.subscriptions.push({
         dispose: () => {
@@ -614,13 +750,13 @@ export const activate = (context: vscode.ExtensionContext) => {
         },
     });
     context.subscriptions.push(
-        vscode.workspace.onDidChangeConfiguration((event) => {
+        vscode.workspace.onDidChangeConfiguration(async (event) => {
             if (event.affectsConfiguration("CodeChatEditor.Capture")) {
-                void refreshCaptureStatus();
+                await refreshCaptureStatus();
             }
         }),
     );
-    void refreshCaptureStatus();
+    refreshCaptureStatus();
 
     context.subscriptions.push(
         vscode.commands.registerCommand(
@@ -769,36 +905,10 @@ export const activate = (context: vscode.ExtensionContext) => {
                         ),
                     );
 
-                    // CAPTURE: end of a debug/run session.
-                    context.subscriptions.push(
-                        vscode.debug.onDidTerminateDebugSession((session) => {
-                            const active = vscode.window.activeTextEditor;
-                            const filePath = active?.document.fileName;
-                            void sendCaptureEvent("run_end", filePath, {
-                                sessionName: session.name,
-                                sessionType: session.type,
-                            });
-                        }),
-                    );
-
-                    // CAPTURE: compile/build end events via VS Code tasks.
-                    context.subscriptions.push(
-                        vscode.tasks.onDidEndTaskProcess((e) => {
-                            const active = vscode.window.activeTextEditor;
-                            const filePath = active?.document.fileName;
-                            const task = e.execution.task;
-                            void sendCaptureEvent("compile_end", filePath, {
-                                taskName: task.name,
-                                taskSource: task.source,
-                                exitCode: e.exitCode,
-                            });
-                        }),
-                    );
-
                     // CAPTURE: listen for file saves.
                     context.subscriptions.push(
                         vscode.workspace.onDidSaveTextDocument((doc) => {
-                            void sendCaptureEvent("save", doc.fileName, {
+                            sendCaptureEvent("save", doc.fileName, {
                                 reason: "manual_save",
                                 languageId: doc.languageId,
                                 lineCount: doc.lineCount,
@@ -806,29 +916,48 @@ export const activate = (context: vscode.ExtensionContext) => {
                         }),
                     );
 
-                    // CAPTURE: start of a debug/run session.
+                    // CAPTURE: start and end of a debug/run session.
                     context.subscriptions.push(
                         vscode.debug.onDidStartDebugSession((session) => {
                             const active = vscode.window.activeTextEditor;
                             const filePath = active?.document.fileName;
-                            void sendCaptureEvent("run", filePath, {
+                            sendCaptureEvent("run", filePath, {
+                                sessionName: session.name,
+                                sessionType: session.type,
+                            });
+                        }),
+                        vscode.debug.onDidTerminateDebugSession((session) => {
+                            const active = vscode.window.activeTextEditor;
+                            const filePath = active?.document.fileName;
+                            sendCaptureEvent("run_end", filePath, {
                                 sessionName: session.name,
                                 sessionType: session.type,
                             });
                         }),
                     );
 
-                    // CAPTURE: compile/build events via VS Code tasks.
+                    // CAPTURE: start and end compile/build events via VS Code
+                    // tasks.
                     context.subscriptions.push(
                         vscode.tasks.onDidStartTaskProcess((e) => {
                             const active = vscode.window.activeTextEditor;
                             const filePath = active?.document.fileName;
                             const task = e.execution.task;
-                            void sendCaptureEvent("compile", filePath, {
+                            sendCaptureEvent("compile", filePath, {
                                 taskName: task.name,
                                 taskSource: task.source,
                                 definition: task.definition,
                                 processId: e.processId,
+                            });
+                        }),
+                        vscode.tasks.onDidEndTaskProcess((e) => {
+                            const active = vscode.window.activeTextEditor;
+                            const filePath = active?.document.fileName;
+                            const task = e.execution.task;
+                            sendCaptureEvent("compile_end", filePath, {
+                                taskName: task.name,
+                                taskSource: task.source,
+                                exitCode: e.exitCode,
                             });
                         }),
                     );
@@ -922,7 +1051,7 @@ export const activate = (context: vscode.ExtensionContext) => {
                 captureFailureLogged = false;
                 captureTransportReady = false;
                 extensionCaptureSessionStarted = false;
-                void refreshCaptureStatus();
+                refreshCaptureStatus();
 
                 const hosted_in_ide =
                     codechat_client_location ===
@@ -941,7 +1070,7 @@ export const activate = (context: vscode.ExtensionContext) => {
                 ) {
                     captureTransportReady = true;
                     const active = vscode.window.activeTextEditor;
-                    void startExtensionCaptureSession(
+                    await startExtensionCaptureSession(
                         active?.document.fileName,
                     );
                     send_update(false);
@@ -1255,7 +1384,7 @@ export const activate = (context: vscode.ExtensionContext) => {
                             await sendResult(id);
                             captureTransportReady = true;
                             const active = vscode.window.activeTextEditor;
-                            void startExtensionCaptureSession(
+                            await startExtensionCaptureSession(
                                 active?.document.fileName,
                             );
                             // Now that the Client is loaded, send the editor's
@@ -1280,32 +1409,11 @@ export const activate = (context: vscode.ExtensionContext) => {
 export const deactivate = async () => {
     console_log("CodeChat Editor extension: deactivating.");
 
-    // CAPTURE: if we were in a doc session, close it out so duration is
-    // recorded.
-    if (docSessionStart !== null) {
-        const now = Date.now();
-        const durationMs = now - docSessionStart;
-        docSessionStart = null;
-        const active = vscode.window.activeTextEditor;
-        const filePath = active?.document.fileName;
-
-        await sendCaptureEvent("doc_session", filePath, {
-            duration_ms: durationMs,
-            duration_seconds: durationMs / 1000.0,
-            closed_by: "extension_deactivate",
-        });
-        await sendCaptureEvent("session_end", filePath, {
-            mode: "doc",
-            closed_by: "extension_deactivate",
-        });
-    }
-
-    // CAPTURE: mark the end of an editor session.
     const active = vscode.window.activeTextEditor;
-    const endFilePath = active?.document.fileName;
-    await sendCaptureEvent("session_end", endFilePath, {
-        mode: "vscode_extension",
-    });
+    await endExtensionCaptureSession(
+        active?.document.fileName,
+        "extension_deactivate",
+    );
 
     await stop_client();
     webview_panel?.dispose();
@@ -1419,13 +1527,18 @@ const send_update = (this_is_dirty: boolean) => {
 // well.
 const stop_client = async () => {
     console_log("CodeChat Editor extension: stopping client.");
+    const active = vscode.window.activeTextEditor;
+    await endExtensionCaptureSession(
+        active?.document.fileName,
+        "client_stopped",
+    );
     if (codeChatEditorServer !== undefined) {
         console_log("CodeChat Editor extension: stopping server.");
         await codeChatEditorServer.stopServer();
         codeChatEditorServer = undefined;
     }
     captureTransportReady = false;
-    void refreshCaptureStatus();
+    await refreshCaptureStatus();
 
     if (idle_timer !== undefined) {
         clearTimeout(idle_timer);
