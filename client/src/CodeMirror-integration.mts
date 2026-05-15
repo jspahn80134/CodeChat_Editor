@@ -294,10 +294,12 @@ export const docBlockField = StateField.define<DecorationSet>({
                                     prev.spec.widget.delimiter,
                                 typeof effect.value.contents === "string"
                                     ? effect.value.contents
-                                    : apply_diff_str(
-                                          prev.spec.widget.contents,
-                                          effect.value.contents,
-                                      ),
+                                    : Array.isArray(effect.value.contents)
+                                      ? apply_diff_str(
+                                            prev.spec.widget.contents,
+                                            effect.value.contents,
+                                        )
+                                      : prev.spec.widget.contents,
                                 // If autosave is allowed (meaning no autosave
                                 // is not true), then this data came from the
                                 // user, not the IDE.
@@ -1210,7 +1212,13 @@ export const scroll_to_line = (
 };
 
 // Apply a `StringDiff` to the before string to produce the after string.
-export const apply_diff_str = (before: string, diffs: StringDiff[]) => {
+export const apply_diff_str = (
+    before: string,
+    diffs: StringDiff[] | undefined,
+) => {
+    if (diffs === undefined) {
+        return before;
+    }
     // Walk from the last diff to the first. JavaScript doesn't have reverse
     // iteration AFAIK.
     let after = before;

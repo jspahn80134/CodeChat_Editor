@@ -334,6 +334,46 @@ function buildFileFields(
     };
 }
 
+function captureLog(message: string): void {
+    capture_output_channel?.appendLine(
+        `${new Date().toISOString()} ${message}`,
+    );
+}
+
+function capturePayloadSummary(payload: CaptureEventWire): string {
+    const data = payload.data as CaptureEventData;
+    return [
+        `type=${payload.event_type}`,
+        `event_id=${payload.event_id}`,
+        `sequence=${payload.sequence_number?.toString()}`,
+        `schema=${payload.schema_version}`,
+        `user_id=${payload.user_id}`,
+        `session_id=${data.session_id}`,
+        `source=${payload.event_source}`,
+        `language=${payload.language_id ?? ""}`,
+        `path_privacy=${data.path_privacy ?? ""}`,
+        payload.file_hash ? `file_hash=${payload.file_hash}` : "",
+        payload.file_path ? `file_path=${payload.file_path}` : "",
+    ]
+        .filter((part) => part.length > 0)
+        .join(" ");
+}
+
+function captureStatusSummary(status: CaptureStatus): string {
+    return [
+        `state=${status.state}`,
+        `enabled=${status.enabled}`,
+        `queued=${status.queued_events}`,
+        `db=${status.persisted_events}`,
+        `fallback=${status.fallback_events}`,
+        `failed=${status.failed_events}`,
+        status.last_error ? `last_error=${status.last_error}` : "",
+        status.fallback_path ? `fallback_path=${status.fallback_path}` : "",
+    ]
+        .filter((part) => part.length > 0)
+        .join(" ");
+}
+
 // Helper to send a capture event to the Rust server.
 async function sendCaptureEvent(
     eventType: CaptureEventType,
@@ -343,6 +383,7 @@ async function sendCaptureEvent(
     const settings = loadStudySettings();
     const disabledReason = captureDisabledReason(settings);
     if (disabledReason !== undefined) {
+        captureLog(`capture skipped: ${eventType} (${disabledReason})`);
         updateCaptureStatusBar(`Capture: ${disabledReason}`, disabledReason);
         return;
     }
@@ -366,21 +407,27 @@ async function sendCaptureEvent(
     };
 
     if (codeChatEditorServer === undefined) {
+        captureLog(
+            `capture skipped: ${capturePayloadSummary(payload)} (server not running)`,
+        );
         reportCaptureFailure("CodeChat server is not running");
         return;
     }
     if (!captureTransportReady) {
-        capture_output_channel?.appendLine(
-            `${new Date().toISOString()} capture skipped before server handshake: ${stringifyCapturePayload(payload)}`,
+        captureLog(
+            `capture skipped before server handshake: ${capturePayloadSummary(payload)}`,
         );
         return;
     }
 
     try {
-        await codeChatEditorServer.sendCaptureEvent(
+        const messageId = await codeChatEditorServer.sendCaptureEvent(
             stringifyCapturePayload(payload),
         );
         captureFailureLogged = false;
+        captureLog(
+            `capture queued message_id=${messageId}: ${capturePayloadSummary(payload)}`,
+        );
         await refreshCaptureStatus();
     } catch (err) {
         reportCaptureFailure(err instanceof Error ? err.message : String(err));
@@ -450,19 +497,7 @@ async function refreshCaptureStatus(): Promise<void> {
         }
         updateCaptureStatusBar(
             label,
-            [
-                `state=${status.state}`,
-                `queued=${status.queued_events}`,
-                `db=${status.persisted_events}`,
-                `fallback=${status.fallback_events}`,
-                `failed=${status.failed_events}`,
-                status.last_error ? `last_error=${status.last_error}` : "",
-                status.fallback_path
-                    ? `fallback_path=${status.fallback_path}`
-                    : "",
-            ]
-                .filter((line) => line.length > 0)
-                .join("\n"),
+            captureStatusSummary(status).split(" ").join("\n"),
         );
     } catch (err) {
         updateCaptureStatusBar(
@@ -551,6 +586,7 @@ async function showCaptureStatus(): Promise<void> {
             label: "Show Capture Details",
             description: captureStatusDetails().split("\n")[0],
             run: async () => {
+                captureLog(`capture status: ${captureStatusDetails()}`);
                 vscode.window.showInformationMessage(captureStatusDetails());
             },
         },
