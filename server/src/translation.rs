@@ -451,6 +451,10 @@ struct TranslationTask {
 /// should not ask students for course/group/assignment/task setup values.
 #[derive(Clone, Debug, Default)]
 struct CaptureContext {
+    /// True only while capture is actively recording. The translation layer
+    /// must not generate write events from a stale participant/session context
+    /// after recording or consent is turned off.
+    active: bool,
     /// Pseudonymous participant UUID from the latest client capture event.
     user_id: Option<String>,
     /// Origin of the client event stream, such as the VS Code extension.
@@ -464,7 +468,21 @@ struct CaptureContext {
 }
 
 impl CaptureContext {
+    /// Refresh server-side capture identity and active/inactive state from an
+    /// extension capture message. This context is used only for server-generated
+    /// write classification events, not for deciding whether the original
+    /// extension event itself is inserted.
     fn update_from_wire(&mut self, wire: &CaptureEventWire) {
+        // Session start/end are the coarse lifecycle signals; the explicit
+        // `capture_active` data field handles settings-change audit events that
+        // should be inserted while also disabling later translated writes.
+        match wire.event_type {
+            CaptureEventType::SessionStart => self.active = true,
+            CaptureEventType::SessionEnd => self.active = false,
+            _ => {}
+        }
+        // Keep the most recent participant/session metadata so translated write
+        // events can be joined to the same participant as extension events.
         if !wire.user_id.trim().is_empty() {
             self.user_id = Some(wire.user_id.clone());
         }
@@ -477,10 +495,20 @@ impl CaptureContext {
         if let Some(client_tz_offset_min) = wire.client_tz_offset_min {
             self.client_tz_offset_min = Some(client_tz_offset_min);
         }
-        if let Some(serde_json::Value::Object(data)) = &wire.data
-            && let Some(session_id) = data.get("session_id").and_then(serde_json::Value::as_str)
-        {
-            self.session_id = Some(session_id.to_string());
+        if let Some(serde_json::Value::Object(data)) = &wire.data {
+            // Settings-change audit events use this flag to tell the server
+            // whether future translation-generated write events are allowed.
+            if let Some(active) = data
+                .get("capture_active")
+                .and_then(serde_json::Value::as_bool)
+            {
+                self.active = active;
+            }
+            // The extension's logical capture session ties server-classified
+            // write events to the same session as extension-originated events.
+            if let Some(session_id) = data.get("session_id").and_then(serde_json::Value::as_str) {
+                self.session_id = Some(session_id.to_string());
+            }
         }
     }
 
@@ -490,6 +518,13 @@ impl CaptureContext {
         file_path: Option<String>,
         data: serde_json::Value,
     ) -> Option<CaptureEventWire> {
+        // Do not generate server-side write_doc/write_code rows unless the
+        // latest settings state says capture is actively recording.
+        if !self.active {
+            return None;
+        }
+        // Normalize arbitrary JSON payloads into objects so we can attach
+        // server-translation metadata consistently.
         let mut data = match data {
             serde_json::Value::Object(map) => map,
             other => {
@@ -502,6 +537,8 @@ impl CaptureContext {
             data.entry("session_id".to_string())
                 .or_insert_with(|| serde_json::json!(session_id));
         }
+        // Preserve any existing source field, but default server-generated
+        // events to `server_translation` for analysis.
         data.entry("source".to_string())
             .or_insert_with(|| serde_json::json!("server_translation"));
 
@@ -520,6 +557,20 @@ impl CaptureContext {
             data: Some(serde_json::Value::Object(data)),
         })
     }
+}
+
+/// True for a capture message that should update `CaptureContext` only. These
+/// messages are used to stop server-side write classification after the user
+/// turns off consent or recording, without adding a synthetic DB row.
+fn capture_control_only(wire: &CaptureEventWire) -> bool {
+    matches!(
+        &wire.data,
+        Some(serde_json::Value::Object(data))
+            if data
+                .get("capture_control_only")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false)
+    )
 }
 
 /// This is the processing task for the Visual Studio Code IDE. It handles all
@@ -603,8 +654,16 @@ pub async fn translation_task(
                         EditorMessageContents::Result(_) => continue_loop = tt.ide_result(ide_message).await,
                         EditorMessageContents::Update(_) => continue_loop = tt.ide_update(ide_message).await,
                         EditorMessageContents::Capture(capture_event) => {
+                            // Capture messages affect both DB storage and the
+                            // translation-layer context used for future
+                            // server-classified write events.
+                            let control_only = capture_control_only(&capture_event);
                             tt.capture_context.update_from_wire(&capture_event);
-                            log_capture_event(&app_state, *capture_event);
+                            if control_only {
+                                debug!("Updated capture context from control-only IDE event.");
+                            } else {
+                                log_capture_event(&app_state, *capture_event);
+                            }
                             send_response(&tt.to_ide_tx, ide_message.id, Ok(ResultOkTypes::Void)).await;
                         },
 
@@ -703,8 +762,15 @@ pub async fn translation_task(
 
                         EditorMessageContents::Update(_) => continue_loop = tt.client_update(client_message).await,
                         EditorMessageContents::Capture(capture_event) => {
+                            // Same capture handling as IDE messages: update the
+                            // context first, then store only non-control events.
+                            let control_only = capture_control_only(&capture_event);
                             tt.capture_context.update_from_wire(&capture_event);
-                            log_capture_event(&app_state, *capture_event);
+                            if control_only {
+                                debug!("Updated capture context from control-only Client event.");
+                            } else {
+                                log_capture_event(&app_state, *capture_event);
+                            }
                             send_response(&tt.to_client_tx, client_message.id, Ok(ResultOkTypes::Void)).await;
                         },
 
@@ -1624,7 +1690,88 @@ fn debug_shorten<T: Debug>(val: T) -> String {
 // -----
 #[cfg(test)]
 mod tests {
-    use crate::{processing::CodeMirrorDocBlock, translation::doc_blocks_compare};
+    use crate::{
+        capture::event_types,
+        processing::CodeMirrorDocBlock,
+        translation::{CaptureContext, capture_control_only, doc_blocks_compare},
+        webserver::CaptureEventWire,
+    };
+
+    fn capture_wire(
+        event_type: crate::capture::CaptureEventType,
+        data: serde_json::Value,
+    ) -> CaptureEventWire {
+        // Minimal test helper for feeding lifecycle/control messages into the
+        // translation-layer capture context.
+        CaptureEventWire {
+            event_id: None,
+            sequence_number: None,
+            schema_version: Some(2),
+            user_id: "participant".to_string(),
+            event_source: Some("vscode_extension".to_string()),
+            language_id: None,
+            file_hash: None,
+            file_path: None,
+            event_type,
+            client_timestamp_ms: None,
+            client_tz_offset_min: Some(360),
+            data: Some(data),
+        }
+    }
+
+    #[test]
+    fn capture_context_only_generates_events_while_active() {
+        let mut context = CaptureContext::default();
+        // Without an active capture session, translated writes must be skipped.
+        assert!(
+            context
+                .capture_event(event_types::WRITE_CODE, None, serde_json::json!({}))
+                .is_none()
+        );
+
+        context.update_from_wire(&capture_wire(
+            event_types::SESSION_START,
+            serde_json::json!({
+                "session_id": "session",
+                "capture_active": true,
+            }),
+        ));
+        // A session_start activates server-side translated write capture.
+        assert!(
+            context
+                .capture_event(event_types::WRITE_CODE, None, serde_json::json!({}))
+                .is_some()
+        );
+
+        context.update_from_wire(&capture_wire(
+            event_types::SESSION_END,
+            serde_json::json!({
+                "capture_active": false,
+            }),
+        ));
+        // A session_end deactivates translated write capture so stale context
+        // cannot continue inserting DB rows.
+        assert!(
+            context
+                .capture_event(event_types::WRITE_CODE, None, serde_json::json!({}))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn capture_control_only_is_detected_from_data() {
+        // Control-only events are the extension's way to update server capture
+        // state without storing the stop signal as a normal event row.
+        let wire = capture_wire(
+            event_types::SESSION_END,
+            serde_json::json!({
+                "capture_active": false,
+                "capture_control_only": true,
+            }),
+        );
+
+        assert!(capture_control_only(&wire));
+    }
 
     #[test]
     fn test_x1() {

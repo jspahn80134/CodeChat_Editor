@@ -96,6 +96,8 @@ pub enum CaptureEventType {
     SessionStart,
     /// Capture or activity session ended.
     SessionEnd,
+    /// Consent or recording settings changed.
+    CaptureSettingsChanged,
     /// Compile/build task ended.
     CompileEnd,
     /// Debug/run session ended.
@@ -128,6 +130,7 @@ impl CaptureEventType {
             Self::Run => "run",
             Self::SessionStart => "session_start",
             Self::SessionEnd => "session_end",
+            Self::CaptureSettingsChanged => "capture_settings_changed",
             Self::CompileEnd => "compile_end",
             Self::RunEnd => "run_end",
             Self::TaskStart => "task_start",
@@ -159,6 +162,8 @@ pub mod event_types {
     pub const RUN: CaptureEventType = CaptureEventType::Run;
     pub const SESSION_START: CaptureEventType = CaptureEventType::SessionStart;
     pub const SESSION_END: CaptureEventType = CaptureEventType::SessionEnd;
+    /// Audit row emitted when the user changes consent or recording settings.
+    pub const CAPTURE_SETTINGS_CHANGED: CaptureEventType = CaptureEventType::CaptureSettingsChanged;
     pub const COMPILE_END: CaptureEventType = CaptureEventType::CompileEnd;
     pub const RUN_END: CaptureEventType = CaptureEventType::RunEnd;
     pub const TASK_START: CaptureEventType = CaptureEventType::TaskStart;
@@ -802,6 +807,10 @@ mod tests {
         assert_eq!(
             serde_json::from_value::<CaptureEventType>(json!("compile_end")).unwrap(),
             event_types::COMPILE_END
+        );
+        assert_eq!(
+            serde_json::to_value(event_types::CAPTURE_SETTINGS_CHANGED).unwrap(),
+            json!("capture_settings_changed")
         );
         assert!(serde_json::from_value::<CaptureEventType>(json!("random")).is_err());
     }

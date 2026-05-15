@@ -71,15 +71,15 @@
                     ],
                     "markdownDescription": "Select the location of the CodeChat Editor Client. After changing this value, you **must** close then restart the CodeChat Editor extension."
                 },
-                "CodeChatEditor.Capture.Enabled": {
+                "CodeChatEditor.Capture.RecordStudyEvents": {
                     "type": "boolean",
                     "default": false,
-                    "markdownDescription": "Enable dissertation instrumentation capture."
+                    "markdownDescription": "Record CodeChat dissertation capture events. This defaults to off. Consent is recorded through **Manage CodeChat Capture** and also defaults to off.\n\n| Consent recorded | Record study events | What happens |\n| --- | --- | --- |\n| Off | Off | Capture is off. |\n| On | Off | Consent is retained, but recording is paused. |\n| On | On | Capture records study events. |\n| Off | On | Capture waits for consent before recording. |"
                 },
                 "CodeChatEditor.Capture.ConsentEnabled": {
                     "type": "boolean",
                     "default": false,
-                    "markdownDescription": "Allow capture after participant consent is recorded for the current study session."
+                    "markdownDescription": "Record that participant consent has been given for CodeChat dissertation capture. This defaults to off and persists after setting."
                 },
                 "CodeChatEditor.Capture.ParticipantId": {
                     "type": "string",

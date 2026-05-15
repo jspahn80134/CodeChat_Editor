@@ -35,6 +35,7 @@ from typing import Any, Iterable, Iterator
 EVENT_FIELDS = [
     "session_start",
     "session_end",
+    "capture_settings_changed",
     "write_doc",
     "write_code",
     "doc_session",
@@ -94,6 +95,16 @@ EVENT_ROW_FIELDS = [
     "run_session_name",
     "run_session_type",
     "save_reason",
+    "changed_by",
+    "changed_settings",
+    "previous_state",
+    "new_state",
+    "previous_consent_enabled",
+    "new_consent_enabled",
+    "previous_record_study_events",
+    "new_record_study_events",
+    "capture_active_before",
+    "capture_active_after",
     "doc_block_count_before",
     "doc_block_count_after",
     "diff_hunks",
@@ -265,6 +276,16 @@ FIELD_DESCRIPTIONS = {
     "run_session_name": "VS Code debug/run session name.",
     "run_session_type": "VS Code debug/run session type.",
     "save_reason": "Save reason reported by the extension.",
+    "changed_by": "Source that changed capture settings, such as Settings UI or Manage CodeChat Capture.",
+    "changed_settings": "JSON array of capture settings changed by a capture_settings_changed event.",
+    "previous_state": "Derived capture state before a capture settings transition.",
+    "new_state": "Derived capture state after a capture settings transition.",
+    "previous_consent_enabled": "Consent setting before a capture settings transition.",
+    "new_consent_enabled": "Consent setting after a capture settings transition.",
+    "previous_record_study_events": "Record Study Events setting before a capture settings transition.",
+    "new_record_study_events": "Record Study Events setting after a capture settings transition.",
+    "capture_active_before": "Whether capture was actively recording before a settings transition.",
+    "capture_active_after": "Whether capture was actively recording after a settings transition.",
     "doc_block_count_before": "Documentation block count before a classified doc-block edit.",
     "doc_block_count_after": "Documentation block count after a classified doc-block edit.",
     "diff_hunks": "Number of text diff hunks in the event payload.",
@@ -846,6 +867,24 @@ def normalize_event_rows(
             "run_session_name": data_text(data, "sessionName", "session_name"),
             "run_session_type": data_text(data, "sessionType", "session_type"),
             "save_reason": data_text(data, "reason"),
+            # Settings-change audit events make consent/recording transitions
+            # analyzable without inspecting raw JSON payloads.
+            "changed_by": data_text(data, "changed_by"),
+            "changed_settings": data_text(data, "changed_settings"),
+            "previous_state": data_text(data, "previous_state"),
+            "new_state": data_text(data, "new_state"),
+            "previous_consent_enabled": int_or_blank(
+                data.get("previous_consent_enabled")
+            ),
+            "new_consent_enabled": int_or_blank(data.get("new_consent_enabled")),
+            "previous_record_study_events": int_or_blank(
+                data.get("previous_record_study_events")
+            ),
+            "new_record_study_events": int_or_blank(
+                data.get("new_record_study_events")
+            ),
+            "capture_active_before": int_or_blank(data.get("capture_active_before")),
+            "capture_active_after": int_or_blank(data.get("capture_active_after")),
             "doc_block_count_before": int_or_blank(data.get("doc_block_count_before")),
             "doc_block_count_after": int_or_blank(data.get("doc_block_count_after")),
             "diff_hunks": diff_stats["hunks"],

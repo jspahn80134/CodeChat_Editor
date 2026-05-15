@@ -216,8 +216,21 @@ interface StudySettings {
     hashFilePaths: boolean;
 }
 
+// Derived state for the two user-visible capture checkboxes. This mirrors the
+// table shown in Settings and is the single source of truth for whether events
+// may be recorded.
+type CaptureSettingsState =
+    | "off"
+    | "paused"
+    | "recording"
+    | "waitingForConsent";
+
 const CAPTURE_SCHEMA_VERSION = 2;
 const CAPTURE_EVENT_SOURCE = "vscode_extension";
+// Settings contribution key for the user-facing recording checkbox. The
+// shorter `Enabled` setting is deliberately no longer used because it was too
+// ambiguous next to consent.
+const CAPTURE_RECORD_SETTING_NAME = "RecordStudyEvents";
 const DEFAULT_REFLECTION_PROMPTS = [
     "What changed in your understanding of this code?",
     "What assumption are you making, and how could you test it?",
@@ -242,6 +255,10 @@ let captureSequenceNumber = 0;
 let capture_status_bar_item: vscode.StatusBarItem | undefined;
 // Timer used to refresh capture status from the running server.
 let capture_status_timer: NodeJS.Timeout | undefined;
+// Last capture settings snapshot used to audit user-visible setting changes
+// without double-logging when a command and VS Code's configuration event both
+// observe the same transition.
+let lastCaptureSettings: StudySettings | undefined;
 
 // Simple classification of what the user is currently doing. `doc` means
 // prose/documentation activity, whether in a Markdown/RST document or a
@@ -272,19 +289,96 @@ function optionalString(value: unknown): string | undefined {
 function loadStudySettings(): StudySettings {
     const config = vscode.workspace.getConfiguration("CodeChatEditor.Capture");
     return {
-        enabled: config.get<boolean>("Enabled", false),
+        // Both capture settings default to false; persisted user values override
+        // these defaults after a student changes the Settings UI.
+        enabled: config.get<boolean>(CAPTURE_RECORD_SETTING_NAME, false),
         consentEnabled: config.get<boolean>("ConsentEnabled", false),
         participantId: optionalString(config.get("ParticipantId")) ?? "",
         hashFilePaths: config.get<boolean>("HashFilePaths", true),
     };
 }
 
-function captureDisabledReason(settings: StudySettings): string | undefined {
-    if (!settings.enabled) {
-        return "disabled in settings";
+// Convert raw settings into the explicit four-row state table. Keeping this as
+// a separate helper prevents callers from inventing their own partial rules.
+function captureSettingsState(settings: StudySettings): CaptureSettingsState {
+    if (settings.consentEnabled && settings.enabled) {
+        return "recording";
     }
-    if (!settings.consentEnabled) {
-        return "waiting for consent";
+    if (settings.consentEnabled) {
+        return "paused";
+    }
+    if (settings.enabled) {
+        return "waitingForConsent";
+    }
+    return "off";
+}
+
+// Compare complete settings snapshots so command-triggered changes and VS Code
+// configuration notifications do not emit duplicate audit rows.
+function captureSettingsEqual(a: StudySettings, b: StudySettings): boolean {
+    return (
+        a.enabled === b.enabled &&
+        a.consentEnabled === b.consentEnabled &&
+        a.participantId === b.participantId &&
+        a.hashFilePaths === b.hashFilePaths
+    );
+}
+
+// Human-readable labels used in status-bar tooltips and QuickPick details.
+function captureStateDescription(state: CaptureSettingsState): string {
+    switch (state) {
+        case "recording":
+            return "Capture records study events.";
+        case "paused":
+            return "Consent is retained, but recording is paused.";
+        case "waitingForConsent":
+            return "Capture waits for consent before recording.";
+        case "off":
+            return "Capture is off.";
+    }
+}
+
+// Build the status bar text and tooltip from the same state table used for
+// gating events. This keeps UI feedback and recording behavior aligned.
+function captureSettingsStatus(settings: StudySettings): {
+    label: string;
+    tooltip: string;
+    state: CaptureSettingsState;
+} {
+    const state = captureSettingsState(settings);
+    let label: string;
+    switch (state) {
+        case "recording":
+            label = "Capture: Recording";
+            break;
+        case "paused":
+            label = "Capture: Paused";
+            break;
+        case "waitingForConsent":
+            label = "Capture: Waiting for consent";
+            break;
+        case "off":
+            label = "Capture: Off";
+            break;
+    }
+
+    return {
+        label,
+        state,
+        tooltip: [
+            `Consent Enabled: ${settings.consentEnabled ? "On" : "Off"}`,
+            `Record Study Events: ${settings.enabled ? "On" : "Off"}`,
+            `State: ${captureStateDescription(state)}`,
+        ].join("\n"),
+    };
+}
+
+// Normal capture events are allowed only in the `recording` row. Audit and
+// control events can bypass this through explicit send options.
+function captureDisabledReason(settings: StudySettings): string | undefined {
+    const state = captureSettingsState(settings);
+    if (state !== "recording") {
+        return captureStateDescription(state);
     }
     return undefined;
 }
@@ -374,21 +468,50 @@ function captureStatusSummary(status: CaptureStatus): string {
         .join(" ");
 }
 
+interface CaptureSendOptions {
+    // Permit audit/control events even when normal capture is paused or waiting
+    // for consent.
+    ignoreCaptureSettings?: boolean;
+    // Update server-side capture state without inserting this event into the DB.
+    controlOnly?: boolean;
+    // Explicit active flag carried to the server so it can enable/disable
+    // translation-generated write events.
+    captureActive?: boolean;
+    // Audit rows for consent being turned off still need the participant ID
+    // that existed before the setting changed.
+    userId?: string;
+}
+
 // Helper to send a capture event to the Rust server.
 async function sendCaptureEvent(
     eventType: CaptureEventType,
     filePath?: string,
     data: CaptureEventData = {},
+    options: CaptureSendOptions = {},
 ): Promise<void> {
     const settings = loadStudySettings();
     const disabledReason = captureDisabledReason(settings);
-    if (disabledReason !== undefined) {
+    // User activity events stop here unless both consent and recording are on.
+    if (!options.ignoreCaptureSettings && disabledReason !== undefined) {
         captureLog(`capture skipped: ${eventType} (${disabledReason})`);
-        updateCaptureStatusBar(`Capture: ${disabledReason}`, disabledReason);
+        const status = captureSettingsStatus(settings);
+        updateCaptureStatusBar(status.label, status.tooltip);
         return;
     }
-    const participantId = await ensureParticipantId();
+    // Control-only messages may run after consent is off, so they must not
+    // generate a fresh participant ID.
+    const participantId = options.userId
+        ? options.userId
+        : options.controlOnly
+          ? settings.participantId || "capture_control"
+          : await ensureParticipantId();
     const fileFields = buildFileFields(filePath, settings);
+    // The server uses `capture_active` to decide whether it may generate
+    // classified write_doc/write_code rows from translated edits.
+    const captureActive =
+        options.captureActive ??
+        (eventType !== "session_end" &&
+            captureSettingsState(settings) === "recording");
     const payload: CaptureEventWire = {
         event_id: crypto.randomUUID(),
         sequence_number: BigInt(++captureSequenceNumber),
@@ -403,6 +526,10 @@ async function sendCaptureEvent(
             ...data,
             session_id: CAPTURE_SESSION_ID,
             path_privacy: settings.hashFilePaths ? "sha256" : "plain",
+            capture_active: captureActive,
+            // A control-only event updates the server's capture context but is
+            // intentionally not inserted into capture storage.
+            ...(options.controlOnly ? { capture_control_only: true } : {}),
         },
     };
 
@@ -426,7 +553,7 @@ async function sendCaptureEvent(
         );
         captureFailureLogged = false;
         captureLog(
-            `capture queued message_id=${messageId}: ${capturePayloadSummary(payload)}`,
+            `${options.controlOnly ? "capture control queued" : "capture queued"} message_id=${messageId}: ${capturePayloadSummary(payload)}`,
         );
         await refreshCaptureStatus();
     } catch (err) {
@@ -463,15 +590,17 @@ function updateCaptureStatusBar(text: string, tooltip?: string) {
 
 async function refreshCaptureStatus(): Promise<void> {
     const settings = loadStudySettings();
-    const disabledReason = captureDisabledReason(settings);
-    if (disabledReason !== undefined) {
-        updateCaptureStatusBar(`Capture: ${disabledReason}`, disabledReason);
+    const settingsStatus = captureSettingsStatus(settings);
+    // When the settings are not in the recording row, the settings state is the
+    // authoritative status regardless of the server's DB/fallback state.
+    if (settingsStatus.state !== "recording") {
+        updateCaptureStatusBar(settingsStatus.label, settingsStatus.tooltip);
         return;
     }
     if (codeChatEditorServer === undefined) {
         updateCaptureStatusBar(
             "Capture: Waiting",
-            "CodeChat server is not running",
+            `${settingsStatus.tooltip}\nServer: CodeChat server is not running`,
         );
         return;
     }
@@ -497,7 +626,10 @@ async function refreshCaptureStatus(): Promise<void> {
         }
         updateCaptureStatusBar(
             label,
-            captureStatusSummary(status).split(" ").join("\n"),
+            [
+                settingsStatus.tooltip,
+                captureStatusSummary(status).split(" ").join("\n"),
+            ].join("\n"),
         );
     } catch (err) {
         updateCaptureStatusBar(
@@ -520,26 +652,198 @@ function captureStatusDetails(): string {
         : (tooltip?.value ?? "Capture status unavailable");
 }
 
-async function setCaptureEnabled(enabled: boolean): Promise<void> {
+async function setRecordStudyEvents(enabled: boolean): Promise<void> {
+    // Save the previous settings before updating so the audit event can record
+    // exactly what changed.
+    const previousSettings = loadStudySettings();
+    await updateCaptureSetting(CAPTURE_RECORD_SETTING_NAME, enabled);
+    await reconcileCaptureSettings(
+        "manage_capture_record_study_events",
+        previousSettings,
+    );
+
+    const updatedSettings = loadStudySettings();
+    if (enabled && captureSettingsState(updatedSettings) === "recording") {
+        vscode.window.showInformationMessage(
+            "CodeChat capture is recording study events.",
+        );
+    } else if (enabled) {
+        vscode.window.showInformationMessage(
+            "CodeChat capture is waiting for consent.",
+        );
+    } else {
+        vscode.window.showInformationMessage(
+            "CodeChat capture recording is paused.",
+        );
+    }
+}
+
+async function setCaptureConsent(enabled: boolean): Promise<void> {
+    // Save the previous settings before updating so the audit event can record
+    // consent transitions, including consent being turned off.
+    const previousSettings = loadStudySettings();
+
+    // Consent-on creates the pseudonymous participant ID up front, so the audit
+    // event and later study events use the same stable identifier.
+    if (enabled) {
+        await ensureParticipantId();
+    }
+    await updateCaptureSetting("ConsentEnabled", enabled);
+    await reconcileCaptureSettings(
+        "manage_capture_consent_enabled",
+        previousSettings,
+    );
+
+    const updatedSettings = loadStudySettings();
+    if (enabled && captureSettingsState(updatedSettings) === "recording") {
+        vscode.window.showInformationMessage(
+            "CodeChat capture consent is recorded and recording is on.",
+        );
+    } else if (enabled) {
+        vscode.window.showInformationMessage(
+            "CodeChat capture consent is recorded.",
+        );
+    } else {
+        vscode.window.showInformationMessage(
+            "CodeChat capture consent is off.",
+        );
+    }
+}
+
+async function giveConsentAndRecordStudyEvents(): Promise<void> {
+    // This command intentionally changes both user-facing settings together,
+    // then lets the common reconcile path emit one combined audit event.
+    const previousSettings = loadStudySettings();
+
+    await ensureParticipantId();
+    await updateCaptureSetting("ConsentEnabled", true);
+    await updateCaptureSetting(CAPTURE_RECORD_SETTING_NAME, true);
+    await reconcileCaptureSettings(
+        "manage_capture_give_consent_and_record",
+        previousSettings,
+    );
+    vscode.window.showInformationMessage(
+        "CodeChat capture consent is recorded and recording is on.",
+    );
+}
+
+async function sendCaptureSettingsChangedEvent(
+    previous: StudySettings,
+    current: StudySettings,
+    changedBy: string,
+    filePath?: string,
+): Promise<void> {
+    // Only the consent and recording checkboxes are study-state transitions.
+    // Other capture settings, such as path hashing, should not create audit
+    // rows in the dissertation event stream.
+    const changedSettings: string[] = [];
+    if (previous.consentEnabled !== current.consentEnabled) {
+        changedSettings.push("ConsentEnabled");
+    }
+    if (previous.enabled !== current.enabled) {
+        changedSettings.push(CAPTURE_RECORD_SETTING_NAME);
+    }
+    if (changedSettings.length === 0) {
+        return;
+    }
+
+    // Prefer the current participant ID, but fall back to the previous value so
+    // turning consent off can still be attributed to the participant who opted
+    // out.
+    let participantId = current.participantId || previous.participantId;
+    if (current.consentEnabled && participantId.length === 0) {
+        participantId = await ensureParticipantId();
+    }
+    if (participantId.length === 0) {
+        captureLog(
+            `capture settings change skipped: ${changedSettings.join(",")} (no participant id)`,
+        );
+        return;
+    }
+
+    const previousState = captureSettingsState(previous);
+    const currentState = captureSettingsState(current);
+    // This audit event is deliberately allowed even when capture is no longer
+    // active, because the transition itself is analytically important.
+    await sendCaptureEvent(
+        "capture_settings_changed",
+        filePath,
+        {
+            changed_by: changedBy,
+            changed_settings: changedSettings,
+            previous_state: previousState,
+            new_state: currentState,
+            previous_consent_enabled: previous.consentEnabled,
+            new_consent_enabled: current.consentEnabled,
+            previous_record_study_events: previous.enabled,
+            new_record_study_events: current.enabled,
+            capture_active_before: previousState === "recording",
+            capture_active_after: currentState === "recording",
+        },
+        {
+            ignoreCaptureSettings: true,
+            captureActive: currentState === "recording",
+            userId: participantId,
+        },
+    );
+}
+
+async function reconcileCaptureSettings(
+    changedBy: string = "settings_ui",
+    previousSettings?: StudySettings,
+): Promise<void> {
     const active = vscode.window.activeTextEditor;
     const filePath = active?.document.fileName;
     const settings = loadStudySettings();
+    // The first reconciliation after activation uses the snapshot captured at
+    // activation; command callers may also provide the pre-change snapshot.
+    const previous = lastCaptureSettings ?? previousSettings;
 
-    if (enabled) {
-        await ensureParticipantId();
-        if (!settings.consentEnabled) {
-            await updateCaptureSetting("ConsentEnabled", true);
-        }
-        await updateCaptureSetting("Enabled", true);
-        extensionCaptureSessionStarted = false;
-        await startExtensionCaptureSession(filePath);
-        vscode.window.showInformationMessage("CodeChat capture is enabled.");
-    } else {
-        await endExtensionCaptureSession(filePath, "capture_disabled");
-        await updateCaptureSetting("Enabled", false);
-        vscode.window.showInformationMessage("CodeChat capture is off.");
+    // Commands update settings and VS Code then fires a configuration event.
+    // This guard keeps the DB audit trail to one row per actual transition.
+    if (
+        lastCaptureSettings !== undefined &&
+        captureSettingsEqual(lastCaptureSettings, settings)
+    ) {
+        await refreshCaptureStatus();
+        return;
     }
 
+    // Write the audit row before changing the server active flag, so turning
+    // capture off records the transition but not any later edit events.
+    if (previous !== undefined) {
+        await sendCaptureSettingsChangedEvent(
+            previous,
+            settings,
+            changedBy,
+            filePath,
+        );
+    }
+
+    const updatedSettings = loadStudySettings();
+    // Recording starts only when both checkboxes are on.
+    if (captureSettingsState(updatedSettings) === "recording") {
+        await startExtensionCaptureSession(filePath);
+    } else if (
+        // If capture was active before this transition, send a control-only stop
+        // so the Rust translation layer stops emitting write_doc/write_code
+        // events from stale context.
+        extensionCaptureSessionStarted ||
+        (previous !== undefined &&
+            captureSettingsState(previous) === "recording")
+    ) {
+        await endExtensionCaptureSession(filePath, changedBy, {
+            controlOnly: true,
+        });
+    } else {
+        // A stop-control is harmless when a server is present and keeps the
+        // server context inactive after settings-only transitions.
+        await sendCaptureStopControl(filePath, changedBy);
+    }
+
+    // Refresh the dedupe snapshot after any participant ID generation or audit
+    // send that may have touched settings.
+    lastCaptureSettings = loadStudySettings();
     await refreshCaptureStatus();
 }
 
@@ -554,27 +858,46 @@ async function copyParticipantId(): Promise<void> {
 async function showCaptureStatus(): Promise<void> {
     await refreshCaptureStatus();
     const settings = loadStudySettings();
-    const actions: CaptureStatusAction[] = [];
+    const settingsStatus = captureSettingsStatus(settings);
+    // The QuickPick exposes the same two independent switches as Settings, plus
+    // one convenience action that turns both on at once.
+    const actions: CaptureStatusAction[] = [
+        {
+            label: "Show Current Capture State",
+            description: captureStateDescription(settingsStatus.state),
+            detail: settingsStatus.tooltip,
+            run: async () => {
+                captureLog(`capture status: ${settingsStatus.tooltip}`);
+                vscode.window.showInformationMessage(settingsStatus.tooltip);
+            },
+        },
+    ];
 
-    if (!settings.consentEnabled) {
+    if (!settings.consentEnabled || !settings.enabled) {
         actions.push({
-            label: "Give Consent and Enable Capture",
-            description: "Generate a pseudonymous participant ID if needed.",
-            run: () => setCaptureEnabled(true),
-        });
-    } else if (settings.enabled) {
-        actions.push({
-            label: "Turn Capture Off",
-            description: "Stop recording study events for this editor.",
-            run: () => setCaptureEnabled(false),
-        });
-    } else {
-        actions.push({
-            label: "Turn Capture On",
-            description: "Resume recording study events for this editor.",
-            run: () => setCaptureEnabled(true),
+            label: "Give Consent and Record Study Events",
+            description: "Turn both capture settings on.",
+            run: giveConsentAndRecordStudyEvents,
         });
     }
+
+    actions.push({
+        label: settings.consentEnabled ? "Turn Consent Off" : "Turn Consent On",
+        description: settings.consentEnabled
+            ? "Stop recording if active; keep the recording setting unchanged."
+            : "Record participant consent; keep the recording setting unchanged.",
+        run: () => setCaptureConsent(!settings.consentEnabled),
+    });
+
+    actions.push({
+        label: settings.enabled
+            ? "Turn Record Study Events Off"
+            : "Turn Record Study Events On",
+        description: settings.enabled
+            ? "Stop recording; keep consent unchanged."
+            : "Start recording only if consent is already on.",
+        run: () => setRecordStudyEvents(!settings.enabled),
+    });
 
     actions.push(
         {
@@ -669,6 +992,8 @@ async function startExtensionCaptureSession(filePath?: string) {
     if (captureDisabledReason(loadStudySettings()) !== undefined) {
         return;
     }
+    // Mark this before sending so recursive status refreshes do not emit a
+    // second session_start for the same extension session.
     extensionCaptureSessionStarted = true;
     await sendCaptureEvent("session_start", filePath, {
         mode: "vscode_extension",
@@ -678,8 +1003,18 @@ async function startExtensionCaptureSession(filePath?: string) {
 async function endExtensionCaptureSession(
     filePath: string | undefined,
     closedBy: string,
+    options: { controlOnly?: boolean } = {},
 ): Promise<void> {
     if (!extensionCaptureSessionStarted) {
+        return;
+    }
+    if (options.controlOnly) {
+        // Consent/recording changes must stop server-side write classification
+        // without inserting a synthetic session_end row after the user opted
+        // out or paused recording.
+        docSessionStart = null;
+        await sendCaptureStopControl(filePath, closedBy);
+        extensionCaptureSessionStarted = false;
         return;
     }
     await closeDocSession(filePath, closedBy);
@@ -688,6 +1023,31 @@ async function endExtensionCaptureSession(
         closed_by: closedBy,
     });
     extensionCaptureSessionStarted = false;
+}
+
+async function sendCaptureStopControl(
+    filePath: string | undefined,
+    closedBy: string,
+): Promise<void> {
+    if (codeChatEditorServer === undefined || !captureTransportReady) {
+        return;
+    }
+    // This message is sent through the normal capture channel so the server can
+    // clear its active capture context, but `capture_control_only` prevents it
+    // from becoming a DB row.
+    await sendCaptureEvent(
+        "session_end",
+        filePath,
+        {
+            mode: "vscode_extension",
+            closed_by: closedBy,
+        },
+        {
+            ignoreCaptureSettings: true,
+            controlOnly: true,
+            captureActive: false,
+        },
+    );
 }
 
 async function closeDocSession(
@@ -765,6 +1125,7 @@ function noteActivity(kind: ActivityKind, filePath?: string) {
 // This is invoked when the extension is activated. It either creates a new
 // CodeChat Editor Server instance or reveals the currently running one.
 export const activate = (context: vscode.ExtensionContext) => {
+    lastCaptureSettings = loadStudySettings();
     capture_output_channel =
         vscode.window.createOutputChannel("CodeChat Capture");
     context.subscriptions.push(capture_output_channel);
@@ -788,7 +1149,7 @@ export const activate = (context: vscode.ExtensionContext) => {
     context.subscriptions.push(
         vscode.workspace.onDidChangeConfiguration(async (event) => {
             if (event.affectsConfiguration("CodeChatEditor.Capture")) {
-                await refreshCaptureStatus();
+                await reconcileCaptureSettings("settings_ui");
             }
         }),
     );
