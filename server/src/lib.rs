@@ -1,4 +1,4 @@
-// Copyright (C) 2025 Bryan A. Jones.
+// Copyright (C) 2026 Bryan A. Jones.
 //
 // This file is part of the CodeChat Editor. The CodeChat Editor is free
 // software: you can redistribute it and/or modify it under the terms of the
@@ -24,11 +24,11 @@
         clippy::float_cmp
     )
 )]
-/// `lib.rs` -- Define library modules for the CodeChat Editor Server
-/// =================================================================
-///
-/// TODO: Add the ability to use
-/// [plugins](https://zicklag.github.io/rust-tutorials/rust-plugins.html).
+//! `lib.rs` -- Define library modules for the CodeChat Editor Server
+//! =================================================================
+//!
+//! TODO: Add the ability to use
+//! [plugins](https://zicklag.github.io/rust-tutorials/rust-plugins.html).
 pub mod capture;
 pub mod ide;
 pub mod lexer;

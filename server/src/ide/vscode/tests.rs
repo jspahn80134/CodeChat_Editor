@@ -1,4 +1,4 @@
-// Copyright (C) 2025 Bryan A. Jones.
+// Copyright (C) 2026 Bryan A. Jones.
 //
 // This file is part of the CodeChat Editor. The CodeChat Editor is free
 // software: you can redistribute it and/or modify it under the terms of the GNU
@@ -13,8 +13,8 @@
 // You should have received a copy of the GNU General Public License along with
 // the CodeChat Editor. If not, see
 // [http://www.gnu.org/licenses](http://www.gnu.org/licenses).
-/// `test.rs` -- Unit tests for the vscode interface
-/// ================================================
+//! `test.rs` -- Unit tests for the vscode interface
+//! ================================================
 // Imports
 // -------
 use std::{

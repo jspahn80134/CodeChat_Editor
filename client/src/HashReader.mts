@@ -1,4 +1,4 @@
-// Copyright (C) 2025 Bryan A. Jones.
+// Copyright (C) 2026 Bryan A. Jones.
 //
 // This file is part of the CodeChat Editor. The CodeChat Editor is free
 // software: you can redistribute it and/or modify it under the terms of the GNU
@@ -72,6 +72,7 @@ const outputContents: Record<string, string> = {};
 let numFound = 0;
 for (const output in metafile.outputs) {
     const outputInfo = metafile.outputs[output];
+    // <fragment id="PEsfbFhMYN"></fragment>
     switch (outputInfo.entryPoint) {
         case "src/CodeChatEditorFramework.mts":
             outputContents["CodeChatEditorFramework.js"] = output;

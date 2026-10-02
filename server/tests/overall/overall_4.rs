@@ -1,4 +1,4 @@
-// Copyright (C) 2025 Bryan A. Jones.
+// Copyright (C) 2026 Bryan A. Jones.
 //
 // This file is part of the CodeChat Editor. The CodeChat Editor is free
 // software: you can redistribute it and/or modify it under the terms of the GNU
@@ -13,14 +13,14 @@
 // You should have received a copy of the GNU General Public License along with
 // the CodeChat Editor. If not, see
 // [http://www.gnu.org/licenses](http://www.gnu.org/licenses).
-/// `overall_4.rs` - test the overall system
-/// ========================================
-///
-/// These are functional tests of the overall system, performed by attaching a
-/// testing IDE to generate commands then observe results, along with a browser
-/// tester. This file focuses on security: it verifies that malicious HTML
-/// supplied as a document's source is sanitized, so that embedded JavaScript
-/// never executes and is removed from the source code the Client produces.
+//! `overall_4.rs` - test the overall system
+//! ========================================
+//!
+//! These are functional tests of the overall system, performed by attaching a
+//! testing IDE to generate commands then observe results, along with a browser
+//! tester. This file focuses on security: it verifies that malicious HTML
+//! supplied as a document's source is sanitized, so that embedded JavaScript
+//! never executes and is removed from the source code the Client produces.
 // Imports
 // -------
 //
@@ -36,7 +36,7 @@ use tokio::time::sleep;
 
 // ### Local
 use crate::common::{
-    CodeChatEditorServerLog, TIMEOUT, assert_no_more_messages, beginning_of_line,
+    CodeChatEditorServerLog, DOC_BLOCK_CSS, TIMEOUT, assert_no_more_messages, beginning_of_line,
     click_element_top_left, end_of_line, optional_message, perform_loadfile,
     select_codechat_iframe,
 };
@@ -149,8 +149,7 @@ async fn test_xss_core(
     //
     // The doc block should render the image with its `onerror` attribute
     // stripped, leaving a harmless `<img>`.
-    let body_css = "#CodeChat-body .CodeChat-doc-contents";
-    let body_content = driver.query(By::Css(body_css)).first().await.unwrap();
+    let body_content = driver.query(By::Css(DOC_BLOCK_CSS)).first().await.unwrap();
     let rendered = body_content.inner_html().await.unwrap();
     assert!(
         !rendered.contains("onerror"),
@@ -187,7 +186,7 @@ async fn test_xss_core(
     client_id += MESSAGE_ID_INCREMENT;
 
     // Refind the editable contents and type a character to trigger an update.
-    let body_content = driver.query(By::Css(body_css)).first().await.unwrap();
+    let body_content = driver.query(By::Css(DOC_BLOCK_CSS)).first().await.unwrap();
     body_content.send_keys("z").await.unwrap();
 
     // A cursor-only update may precede the text update; accept it, then inspect
@@ -649,7 +648,25 @@ async fn test_arrow_key_navigation_multiline_doc_block_core(
         }
     );
     codechat_server.send_result(client_id, None).await.unwrap();
-    //client_id += MESSAGE_ID_INCREMENT;
+    client_id += MESSAGE_ID_INCREMENT;
+    // Sometimes, there's another message as well.
+    if let Some(msg) = codechat_server.get_message_timeout(TIMEOUT).await {
+        assert_eq!(
+            msg,
+            EditorMessage {
+                id: client_id,
+                message: EditorMessageContents::Update(UpdateMessageContents {
+                    file_path: path_str.clone(),
+                    cursor_position: Some(CursorPosition::Line(1)),
+                    scroll_position: Some(1.0),
+                    is_re_translation: false,
+                    contents: None,
+                })
+            }
+        );
+        codechat_server.send_result(client_id, None).await.unwrap();
+        //client_id += MESSAGE_ID_INCREMENT;
+    }
 
     // `Line(8)` only proves the caret is somewhere on the paragraph's *last*
     // source line -- it can't distinguish that line's start from its end.

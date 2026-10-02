@@ -1,4 +1,4 @@
-// Copyright (C) 2025 Bryan A. Jones.
+// Copyright (C) 2026 Bryan A. Jones.
 //
 // This file is part of the CodeChat Editor. The CodeChat Editor is free
 // software: you can redistribute it and/or modify it under the terms of the GNU
@@ -13,27 +13,27 @@
 // You should have received a copy of the GNU General Public License along with
 // the CodeChat Editor. If not, see
 // [http://www.gnu.org/licenses](http://www.gnu.org/licenses).
-/// `overall/common/mod.rs` - test the overall system
-/// ===============================================
-///
-/// These are functional tests of the overall system, performed by attaching a
-/// testing IDE to generate commands then observe results, along with a browser
-/// tester.
-///
-/// A second challenge revolves around the lack of an async `Drop` trait: the
-/// web driver server should be started before any test, left running during all
-/// tests, then terminated as the test program exits. The web driver must be
-/// initialized before a test then stopped at the end of that test. Both are
-/// ideal for this missing Drop trait. As a workaround:
-///
-/// * The web driver server relies on the C `atexit` call to stop the server.
-///   However, when tests fail, this doesn't get called, leaving the server
-///   running. This causes the server to fail to start on the next test run,
-///   since it's still running. Therefore, errors when starting the web driver
-///   server are ignored by design.
-/// * Tests are run in an async block, and any panics produced inside it are
-///   caught using `catch_unwind()`. The driver is shut down before returning an
-///   error due to the panic.
+//! `overall/common/mod.rs` - test the overall system
+//! =================================================
+//!
+//! These are functional tests of the overall system, performed by attaching a
+//! testing IDE to generate commands then observe results, along with a browser
+//! tester.
+//!
+//! A second challenge revolves around the lack of an async `Drop` trait: the
+//! web driver server should be started before any test, left running during all
+//! tests, then terminated as the test program exits. The web driver must be
+//! initialized before a test then stopped at the end of that test. Both are
+//! ideal for this missing Drop trait. As a workaround:
+//!
+//! * The web driver server relies on the C `atexit` call to stop the server.
+//!   However, when tests fail, this doesn't get called, leaving the server
+//!   running. This causes the server to fail to start on the next test run,
+//!   since it's still running. Therefore, errors when starting the web driver
+//!   server are ignored by design.
+//! * Tests are run in an async block, and any panics produced inside it are
+//!   caught using `catch_unwind()`. The driver is shut down before returning an
+//!   error due to the panic.
 // Imports
 // -------
 //
@@ -43,7 +43,7 @@ use std::{
     error::Error,
     panic::AssertUnwindSafe,
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, Instant},
 };
 // Only used on Linux, to check whether CI is running this test.
 #[cfg(target_os = "linux")]
@@ -56,9 +56,11 @@ use futures::FutureExt;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 use thirtyfour::{
-    BrowserLogEntry, By, ChromiumLikeCapabilities, DesiredCapabilities, Key, LoggingPrefsLogLevel,
-    TypingData, WebDriver, WebElement, error::WebDriverError, prelude::ElementQueryable,
+    BrowserLogEntry, By, ChromiumLikeCapabilities, DesiredCapabilities, ElementRect, Key,
+    LoggingPrefsLogLevel, TypingData, WebDriver, WebElement, error::WebDriverError,
+    prelude::ElementQueryable,
 };
+use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 use tracing_log::LogTracer;
 use tracing_subscriber::EnvFilter;
@@ -244,6 +246,25 @@ impl ExpectedMessages {
 // and loadfile acknowledgements under matrix load.
 pub const TIMEOUT: Duration = Duration::from_secs(15);
 
+// The editable contents of a CodeChat Editor document -- a file translated
+// entirely to a single doc block, with no CodeMirror editor around it.
+pub const DOC_BLOCK_CSS: &str = "#CodeChat-body .CodeChat-doc-contents";
+
+// Time to wait for the Client's asynchronously-rendered content (see
+// `wait_for_stable_rect`) to settle. A doc block holding a Graphviz or Mermaid
+// diagram grows by hundreds of pixels when that diagram appears, and CI runs
+// three OS jobs whose `cargo test` threads each drive their own browser, so
+// allow generously for a loaded runner.
+const RENDER_TIMEOUT: Duration = Duration::from_secs(20);
+
+// How often `wait_for_stable_rect` re-checks while waiting.
+const RENDER_POLL_INTERVAL: Duration = Duration::from_millis(100);
+
+// How many consecutive identical geometry samples mean an element has stopped
+// moving. Two samples can straddle a lull between two renderers finishing, so
+// require a third.
+const STABLE_RECT_SAMPLES: usize = 3;
+
 // Browser-backed tests share a single WebDriver endpoint. Safari on macOS CI is
 // unreliable with overlapping sessions, so serialize the harness.
 pub(crate) static WEB_DRIVER_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -292,8 +313,12 @@ pub async fn harness<
     //
     // Comment/uncomment these out to debug test failures.
     caps.add_arg("--headless")?;
-    // See [SO](https://stackoverflow.com/questions/78996364/chrome-129-headless-shows-blank-window) -- this prevents a blank windows popping up for each test. Tested with Chrome version 150.0.7871.47 (Official Build) (64-bit).
-    caps.add_arg("--window-position=-2400,-2400")?;
+    // See
+    // [SO](https://stackoverflow.com/questions/78996364/chrome-129-headless-shows-blank-window)
+    // -- this prevents a blank windows popping up for each test. Tested with
+    // Chrome version 150.0.7871.47 (Official Build) (64-bit). No longer needed
+    // when tested with Chrome version 152.0.7977.83.
+    //caps.add_arg("--window-position=-2400,-2400")?;
     //caps.add_arg("--auto-open-devtools-for-tabs")?;
     // Insert the code in a test to pause it for manual inspection.
     //use std::time::Duration;
@@ -737,20 +762,118 @@ pub async fn perform_loadfile(
     }
 }
 
+// Report whether the Client has finished rendering everything whose layout
+// arrives asynchronously. See `wait_for_stable_rect`, which polls this.
+//
+// Graphviz and Mermaid each render into a shadow root, replacing its contents
+// with an `svg` once they finish; the `GraphViz, Mathjax, Mermaid` test in
+// `CodeChatEditor-test.mts` waits on the same condition.
+//
+// MathJax instead loads lazily -- see `mathJaxTypeset` in
+// `CodeMirror-integration.mts`, which walks through the states enumerated
+// here. `window.MathJax` stays `undefined` until the Client finds math on the
+// page, at which point it becomes the configuration object that MathJax's
+// script reads as it loads; `startup` therefore appears only once the library
+// itself is loaded, and `startup.promise` resolves once its initial
+// typesetting is done.
+//
+// Since that promise can stay pending, race it against a timer so this probe
+// always answers promptly and the caller keeps polling, instead of blocking
+// here until WebDriver's script timeout expires.
+const RENDER_COMPLETE_JS: &str = r#"
+    const pollMs = arguments[0];
+    const done = arguments[arguments.length - 1];
+    const diagramsReady = () =>
+        [...document.querySelectorAll("graphviz-graph, wc-mermaid")].every(
+            (element) => element.shadowRoot?.querySelector("svg") != null,
+        );
+    const mathJaxLoading =
+        window.MathJax !== undefined && window.MathJax.startup === undefined;
+    let mathReady = false;
+    const noteMathReady = () => {
+        mathReady = true;
+    };
+    Promise.race([
+        Promise.resolve(window.MathJax?.startup?.promise).then(
+            noteMathReady,
+            noteMathReady,
+        ),
+        new Promise((resolve) => setTimeout(resolve, pollMs)),
+    ]).then(() => done(!mathJaxLoading && mathReady && diagramsReady()));
+"#;
+
+/// Wait until `element`'s geometry has settled, then return it.
+///
+/// A test which clicks at an offset from an element's center must measure that
+/// element only once it has stopped moving. WebDriver re-derives the center
+/// when the action runs, so a measurement taken before Graphviz, Mermaid or
+/// MathJax finishes rendering yields an offset computed from a stale height:
+/// the click then lands roughly half the growth below where it was aimed --
+/// for a doc block holding a diagram, far enough down to miss the first line
+/// entirely.
+///
+/// Waiting for those renderers to report completion is not sufficient on its
+/// own, since the reflow they trigger lands afterwards; waiting for the
+/// geometry to stop changing is not sufficient either, since a renderer which
+/// has yet to start looks indistinguishable from one which has finished. So do
+/// both.
+async fn wait_for_stable_rect(
+    driver_ref: &WebDriver,
+    // The element whose geometry the caller is about to measure.
+    element: &WebElement,
+    // That element's settled geometry.
+) -> Result<ElementRect, WebDriverError> {
+    let deadline = Instant::now() + RENDER_TIMEOUT;
+    let poll_ms: Value = (RENDER_POLL_INTERVAL.as_millis() as u64).into();
+    while !driver_ref
+        .execute_async(RENDER_COMPLETE_JS, vec![poll_ms.clone()])
+        .await?
+        .convert::<bool>()?
+    {
+        assert!(
+            Instant::now() < deadline,
+            "Timed out waiting for Graphviz/Mermaid/MathJax rendering to finish."
+        );
+        sleep(RENDER_POLL_INTERVAL).await;
+    }
+
+    let mut rect = element.rect().await?;
+    let mut matches = 1;
+    while matches < STABLE_RECT_SAMPLES {
+        assert!(
+            Instant::now() < deadline,
+            "Timed out waiting for an element's geometry to stop changing."
+        );
+        sleep(RENDER_POLL_INTERVAL).await;
+        let next = element.rect().await?;
+        matches = if (next.x, next.y, next.width, next.height)
+            == (rect.x, rect.y, rect.width, rect.height)
+        {
+            matches + 1
+        } else {
+            1
+        };
+        rect = next;
+    }
+
+    Ok(rect)
+}
+
 /// Click near the top-left corner of `element`. By default, `click()` selects
 /// the middle of an element; we want to start at the first line, so use an
 /// action chain to offset from the middle (the origin used by
 /// `move_to_element_with_offset`) toward the top left.
 ///
-/// Note that the offset must be computed from the element's `width`/`height`. A
-/// few pixels of inset is also added so the click lands just inside the element
-/// rather than on its border or in any surrounding padding.
+/// Note that the offset must be computed from the element's `width`/`height`,
+/// measured once the element has stopped moving -- see `wait_for_stable_rect`.
+/// A few pixels of inset is also added so the click lands just inside the
+/// element rather than on its border or in any surrounding padding.
 #[allow(dead_code)]
 pub async fn click_element_top_left(
     driver_ref: &WebDriver,
     element: &WebElement,
 ) -> Result<(), WebDriverError> {
-    let element_size = element.rect().await?;
+    let element_size = wait_for_stable_rect(driver_ref, element).await?;
     driver_ref
         .action_chain()
         .move_to_element_with_offset(

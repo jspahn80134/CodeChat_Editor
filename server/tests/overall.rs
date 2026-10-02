@@ -1,4 +1,4 @@
-// Copyright (C) 2025 Bryan A. Jones.
+// Copyright (C) 2026 Bryan A. Jones.
 //
 // This file is part of the CodeChat Editor. The CodeChat Editor is free
 // software: you can redistribute it and/or modify it under the terms of the GNU
@@ -21,15 +21,15 @@
     clippy::cast_possible_truncation,
     clippy::float_cmp
 )]
-/// `overall.rs` - test the overall system
-/// =======================================
-///
-/// This file combines all the `overall_*` test modules into a single test
-/// executable, so that a single instance of the web driver server is shared by
-/// all of them. See `overall/common/mod.rs` for the shared test harness.
-///
-/// To run these tests, execute `cargo test --test overall
-/// <optional_test_name>` in the `server/` directory.
+//! `overall.rs` - test the overall system
+//! =======================================
+//!
+//! This file combines all the `overall_*` test modules into a single test
+//! executable, so that a single instance of the web driver server is shared by
+//! all of them. See `overall/common/mod.rs` for the shared test harness.
+//!
+//! To run these tests, execute `cargo test --test overall
+//! <optional_test_name>` in the `server/` directory.
 #[path = "overall/common/mod.rs"]
 mod common;
 #[path = "overall/overall_1.rs"]
@@ -42,3 +42,5 @@ mod overall_3;
 mod overall_4;
 #[path = "overall/overall_5.rs"]
 mod overall_5;
+#[path = "overall/overall_a11y.rs"]
+mod overall_a11y;

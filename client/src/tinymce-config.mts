@@ -1,4 +1,4 @@
-// Copyright (C) 2025 Bryan A. Jones.
+// Copyright (C) 2026 Bryan A. Jones.
 //
 // This file is part of the CodeChat Editor. The CodeChat Editor is free
 // software: you can redistribute it and/or modify it under the terms of the GNU
@@ -124,6 +124,12 @@ export const init = async (
             // Prevent drag-and-dropping images; this create a mess. See the
             // [docs](https://www.tiny.cloud/docs/tinymce/latest/copy-and-paste/#paste_data_images).
             paste_data_images: false,
+            // TinyMCE's "Get all features" promotional link breaks accessibility. It carries `aria-hidden="true"` yet remains in the tab order, which is the
+            // `aria-hidden-focus` failure: a keyboard user lands on a control their screen
+            // reader has been told does not exist. Separately, its text fails contrast at
+            // 4.31:1 (`#086be6` on `#e8f1f8`) against the 4.5:1 requirement.
+            // Disable it.
+            promotion: false,
 
             // ### Settings for plugins
             //
@@ -143,8 +149,10 @@ export const init = async (
                 "bold italic underline codeformat | quicklink h2 h3",
 
             // Needed to allow custom elements.
-            extended_valid_elements: "graphviz-graph[scale],wc-mermaid",
-            custom_elements: "graphviz-graph,wc-mermaid",
+            extended_valid_elements:
+                "graphviz-graph[scale],wc-mermaid,xref[contenteditable|ref],fragment[contenteditable|following|id]",
+            // Per the [docs](https://www.tiny.cloud/docs/tinymce/latest/content-filtering/#custom_elements), `~` marks tags as an inline element, not a block element.
+            custom_elements: "graphviz-graph,wc-mermaid,~xref,~fragment",
         },
     );
 

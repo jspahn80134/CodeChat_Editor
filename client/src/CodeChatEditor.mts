@@ -1,4 +1,4 @@
-// Copyright (C) 2025 Bryan A. Jones.
+// Copyright (C) 2026 Bryan A. Jones.
 //
 // This file is part of the CodeChat Editor. The CodeChat Editor is free
 // software: you can redistribute it and/or modify it under the terms of the GNU
@@ -315,7 +315,7 @@ const _openLp = async (
                 // in`source.doc`. We don't need the CodeMirror editor at all;
                 // instead, treat it like a single doc block contents div.
                 docContent = source.Plain.doc;
-                codechatBody.innerHTML = `<div class="CodeChat-doc-contents" spellcheck="true">${docContent}</div>`;
+                codechatBody.innerHTML = `<div class="CodeChat-doc-contents" spellcheck="true" tabindex="-1">${docContent}</div>`;
                 await init({
                     selector: ".CodeChat-doc-contents",
                     // In the doc-only mode, add auto update functionality.

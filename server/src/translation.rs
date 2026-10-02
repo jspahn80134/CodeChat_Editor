@@ -1,4 +1,4 @@
-// Copyright (C) 2025 Bryan A. Jones.
+// Copyright (C) 2026 Bryan A. Jones.
 //
 // This file is part of the CodeChat Editor. The CodeChat Editor is free
 // software: you can redistribute it and/or modify it under the terms of the GNU
@@ -13,195 +13,195 @@
 // You should have received a copy of the GNU General Public License along with
 // the CodeChat Editor. If not, see
 // [http://www.gnu.org/licenses](http://www.gnu.org/licenses).
-/// `translation.rs` -- translate messages between the IDE and the Client
-/// =====================================================================
-///
-/// The IDE extension client (IDE for short) and the CodeChat Editor Client (or
-/// Editor for short) exchange messages with each other, mediated by the
-/// CodeChat Server. The Server forwards messages from one client to the other,
-/// translating as necessary (for example, between source code and the Editor
-/// format). This module implements the protocol for this forwarding and
-/// translation logic; the actuation translation algorithms are implemented in
-/// the processing module.
-///
-/// Overview
-/// --------
-///
-/// ### Architecture
-///
-/// It uses a set of queues to decouple websocket protocol activity from the
-/// core processing needed to translate source code between a CodeChat Editor
-/// Client and an IDE client. The following diagram illustrates this approach:
-///
-/// ```graphviz
-/// digraph {
-/// ccc -> client_task [ label = "websocket" dir = "both" ]
-/// ccc -> http_task [ label = "HTTP\nrequest/response" dir = "both"]
-/// client_task -> from_client
-/// http_task -> http_to_client
-/// http_to_client -> processing
-/// processing -> http_from_client
-/// http_from_client -> http_task
-/// from_client -> processing
-/// processing -> to_client
-/// to_client -> client_task
-/// ide -> ide_task [ dir = "both" ]
-/// ide_task -> from_ide
-/// from_ide -> processing
-/// processing -> to_ide
-/// to_ide -> ide_task
-/// { rank = same; client_task; http_task }
-/// { rank = same; to_client; from_client; http_from_client; http_to_client }
-/// { rank = same; to_ide; from_ide }
-/// { rank = max; ide }
-/// ccc [ label = "CodeChat Editor\nClient"]
-/// client_task [ label = "Client websocket\ntask"]
-/// http_task [ label = "HTTP endpoint"]
-/// from_client [ label = "queue from client" shape="rectangle"]
-/// processing [ label = "Processing task" ]
-/// to_client [ label = "queue to client" shape="rectangle"]
-/// http_to_client [ label = "http queue to client" shape = "rectangle"]
-/// http_from_client [ label = "oneshot from client" shape = "box"]
-/// ide [ label = "CodeChat Editor\nIDE plugin"]
-/// ide_task [ label = "IDE task" ]
-/// from_ide [ label = "queue from IDE" shape="rectangle" ]
-/// to_ide [ label = "queue to IDE" shape="rectangle" ]
-/// }
-/// ```
-///
-/// The queues use multiple-sender, single receiver (mpsc) types. The exception
-/// to this pattern is the HTTP endpoint. This endpoint is invoked with each
-/// HTTP request, rather than operating as a single, long-running task. It sends
-/// the request to the processing task using an mpsc queue; this request
-/// includes a one-shot channel which enables the request to return a response
-/// to this specific request instance. The endpoint then returns the provided
-/// response.
-///
-/// ### Protocol
-///
-/// The following diagrams formally define the forwarding and translation
-/// protocol which this module implements.
-///
-/// * The startup phase loads the Client framework into a browser:
-///
-///   ```mermaid
-///   sequenceDiagram
-///   participant IDE
-///   participant Server
-///   participant Client
-///   note over IDE, Client: Startup
-///   IDE ->> Server: Opened(IdeType)
-///   Server ->> IDE: Result(String: OK)
-///   Server ->> IDE: ClientHtml(String: HTML or URL)
-///   IDE ->> Server: Result(String: OK)
-///   note over IDE, Client: Open browser (Client framework HTML or URL)
-///   loop
-///     Client -> Server: HTTP request(/static URL)
-///     Server -> Client: HTTP response(/static data)
-///   end
-///   ```
-///
-/// * If the current file in the IDE changes (including the initial startup,
-///   when the change is from no file to the current file), or a link is
-///   followed in the Client's iframe:
-///
-///   ```mermaid
-///   sequenceDiagram
-///   participant IDE
-///   participant Server
-///   participant Client
-///   alt IDE loads file
-///     IDE ->> Client: CurrentFile(String: Path of main.py)
-///     opt If Client document is dirty
-///         Client ->> IDE: Update(String: contents of main.py)
-///         IDE ->> Client: Response(OK)
-///     end
-///     Client ->> IDE: Response(OK)
-///   else Client loads file
-///     Client ->> IDE: CurrentFile(String: URL of main.py)
-///     IDE ->> Client: Response(OK)
-///   end
-///   Client ->> Server: HTTP request(URL of main.py)
-///   Server ->> IDE: LoadFile(String: path to main.py)
-///   IDE ->> Server: Response(LoadFile(String: file contents of main.py))
-///   alt main.py is editable
-///     Server ->> Client: HTTP response(contents of Client)
-///     Server ->> Client: Update(String: contents of main.py)
-///     Client ->> Server: Response(OK)
-///     loop
-///         Client ->> Server: HTTP request(URL of supporting file in main.py)
-///         Server ->> IDE: LoadFile(String: path of supporting file)
-///         alt Supporting file in IDE
-///             IDE ->> Server: Response(LoadFile(contents of supporting file)
-///             Server ->> Client: HTTP response(contents of supporting file)
-///         else Supporting file not in IDE
-///             IDE ->> Server: Response(LoadFile(None))
-///             Server ->> Client: HTTP response(contents of supporting file from /// filesystem)
-///         end
-///     end
-///   else main.py not editable and not a project
-///     Server ->> Client: HTTP response(contents of main.py)
-///   else main.py not editable and is a project
-///     Server ->> Client: HTTP response(contents of Client Simple Viewer)
-///     Client ->> Server: HTTP request (URL?raw of main.py)
-///     Server ->> Client: HTTP response(contents of main.py)
-///   end
-///   ```
-///
-/// * If the current file's contents in the IDE are edited:
-///
-///   ```mermaid
-///   sequenceDiagram
-///   participant IDE
-///   participant Server
-///   participant Client
-///   IDE ->> Server: Update(String: new text contents)
-///   alt Main file is editable
-///     Server ->> Client: Update(String: new Client contents)
-///   else Main file is not editable
-///     Server ->> Client: Update(String: new text contents)
-///   end
-///   Client ->> IDE: Response(String: OK)
-///   ```
-///
-/// * If the current file's contents in the Client are edited, the Client sends
-///   the IDE an `Update` with the revised contents.
-///
-/// * When the PC goes to sleep then wakes up, the IDE client and the Editor
-///   client both reconnect to the websocket URL containing their assigned ID.
-///
-/// * If the Editor client or the IDE client are closed, they close their
-///   websocket, which sends a `Close` message to the other websocket, causes it
-///   to also close and ending the session.
-///
-/// * If the server is stopped (or crashes), both clients shut down after
-///   several reconnect retries.
-///
-/// ### Editor-overlay filesystem
-///
-/// When the Client displays a file provided by the IDE, that file may not exist
-/// in the filesystem (a newly-created document), the IDE's content may be newer
-/// than the filesystem content (an unsaved file), or the file may exist only in
-/// the filesystem (for examples, images referenced by a file). The Client loads
-/// files by sending HTTP requests to the Server with a URL which includes the
-/// path to the desired file. Therefore, the Server must first ask the IDE if it
-/// has the requested file; if so, it must deliver the IDE's file contents; if
-/// not, it must load thee requested file from the filesystem. This process --
-/// fetching from the IDE if possible, then falling back to the filesystem --
-/// defines the editor-overlay filesystem.
-///
-/// #### Message IDs
-///
-/// The message system connects the IDE, Server, and Client; all three can serve
-/// as the source or destination for a message. Any message sent should produce
-/// a Response message in return. Therefore, we need globally unique IDs for
-/// each message. To achieve this, the Server uses IDs that are multiples of 3
-/// (0, 3, 6, ...), the Client multiples of 3 + 1 (1, 4, 7, ...) and the IDE
-/// multiples of 3 + 2 (2, 5, 8, ...). A double-precision floating point number
-/// (the standard
-/// [numeric type](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Data_structures#number_type)
-/// in JavaScript) has a 53-bit mantissa, meaning IDs won't wrap around for a
-/// very long time.
+//! `translation.rs` -- translate messages between the IDE and the Client
+//! =====================================================================
+//!
+//! The IDE extension client (IDE for short) and the CodeChat Editor Client (or
+//! Editor for short) exchange messages with each other, mediated by the
+//! CodeChat Server. The Server forwards messages from one client to the other,
+//! translating as necessary (for example, between source code and the Editor
+//! format). This module implements the protocol for this forwarding and
+//! translation logic; the actuation translation algorithms are implemented in
+//! the processing module.
+//!
+//! Overview
+//! --------
+//!
+//! ### Architecture
+//!
+//! It uses a set of queues to decouple websocket protocol activity from the
+//! core processing needed to translate source code between a CodeChat Editor
+//! Client and an IDE client. The following diagram illustrates this approach:
+//!
+//! ```graphviz
+//! digraph {
+//! ccc -> client_task [ label = "websocket" dir = "both" ]
+//! ccc -> http_task [ label = "HTTP\nrequest/response" dir = "both"]
+//! client_task -> from_client
+//! http_task -> http_to_client
+//! http_to_client -> processing
+//! processing -> http_from_client
+//! http_from_client -> http_task
+//! from_client -> processing
+//! processing -> to_client
+//! to_client -> client_task
+//! ide -> ide_task [ dir = "both" ]
+//! ide_task -> from_ide
+//! from_ide -> processing
+//! processing -> to_ide
+//! to_ide -> ide_task
+//! { rank = same; client_task; http_task }
+//! { rank = same; to_client; from_client; http_from_client; http_to_client }
+//! { rank = same; to_ide; from_ide }
+//! { rank = max; ide }
+//! ccc [ label = "CodeChat Editor\nClient"]
+//! client_task [ label = "Client websocket\ntask"]
+//! http_task [ label = "HTTP endpoint"]
+//! from_client [ label = "queue from client" shape="rectangle"]
+//! processing [ label = "Processing task" ]
+//! to_client [ label = "queue to client" shape="rectangle"]
+//! http_to_client [ label = "http queue to client" shape = "rectangle"]
+//! http_from_client [ label = "oneshot from client" shape = "box"]
+//! ide [ label = "CodeChat Editor\nIDE plugin"]
+//! ide_task [ label = "IDE task" ]
+//! from_ide [ label = "queue from IDE" shape="rectangle" ]
+//! to_ide [ label = "queue to IDE" shape="rectangle" ]
+//! }
+//! ```
+//!
+//! The queues use multiple-sender, single receiver (mpsc) types. The exception
+//! to this pattern is the HTTP endpoint. This endpoint is invoked with each
+//! HTTP request, rather than operating as a single, long-running task. It sends
+//! the request to the processing task using an mpsc queue; this request
+//! includes a one-shot channel which enables the request to return a response
+//! to this specific request instance. The endpoint then returns the provided
+//! response.
+//!
+//! ### Protocol
+//!
+//! The following diagrams formally define the forwarding and translation
+//! protocol which this module implements.
+//!
+//! * The startup phase loads the Client framework into a browser:
+//!
+//!   ```mermaid
+//!   sequenceDiagram
+//!   participant IDE
+//!   participant Server
+//!   participant Client
+//!   note over IDE, Client: Startup
+//!   IDE ->> Server: Opened(IdeType)
+//!   Server ->> IDE: Result(String: OK)
+//!   Server ->> IDE: ClientHtml(String: HTML or URL)
+//!   IDE ->> Server: Result(String: OK)
+//!   note over IDE, Client: Open browser (Client framework HTML or URL)
+//!   loop
+//!     Client -> Server: HTTP request(/static URL)
+//!     Server -> Client: HTTP response(/static data)
+//!   end
+//!   ```
+//!
+//! * If the current file in the IDE changes (including the initial startup,
+//!   when the change is from no file to the current file), or a link is
+//!   followed in the Client's iframe:
+//!
+//!   ```mermaid
+//!   sequenceDiagram
+//!   participant IDE
+//!   participant Server
+//!   participant Client
+//!   alt IDE loads file
+//!     IDE ->> Client: CurrentFile(String: Path of main.py)
+//!     opt If Client document is dirty
+//!         Client ->> IDE: Update(String: contents of main.py)
+//!         IDE ->> Client: Response(OK)
+//!     end
+//!     Client ->> IDE: Response(OK)
+//!   else Client loads file
+//!     Client ->> IDE: CurrentFile(String: URL of main.py)
+//!     IDE ->> Client: Response(OK)
+//!   end
+//!   Client ->> Server: HTTP request(URL of main.py)
+//!   Server ->> IDE: LoadFile(String: path to main.py)
+//!   IDE ->> Server: Response(LoadFile(String: file contents of main.py))
+//!   alt main.py is editable
+//!     Server ->> Client: HTTP response(contents of Client)
+//!     Server ->> Client: Update(String: contents of main.py)
+//!     Client ->> Server: Response(OK)
+//!     loop
+//!         Client ->> Server: HTTP request(URL of supporting file in main.py)
+//!         Server ->> IDE: LoadFile(String: path of supporting file)
+//!         alt Supporting file in IDE
+//!             IDE ->> Server: Response(LoadFile(contents of supporting file)
+//!             Server ->> Client: HTTP response(contents of supporting file)
+//!         else Supporting file not in IDE
+//!             IDE ->> Server: Response(LoadFile(None))
+//!             Server ->> Client: HTTP response(contents of supporting file from /// filesystem)
+//!         end
+//!     end
+//!   else main.py not editable and not a project
+//!     Server ->> Client: HTTP response(contents of main.py)
+//!   else main.py not editable and is a project
+//!     Server ->> Client: HTTP response(contents of Client Simple Viewer)
+//!     Client ->> Server: HTTP request (URL?raw of main.py)
+//!     Server ->> Client: HTTP response(contents of main.py)
+//!   end
+//!   ```
+//!
+//! * If the current file's contents in the IDE are edited:
+//!
+//!   ```mermaid
+//!   sequenceDiagram
+//!   participant IDE
+//!   participant Server
+//!   participant Client
+//!   IDE ->> Server: Update(String: new text contents)
+//!   alt Main file is editable
+//!     Server ->> Client: Update(String: new Client contents)
+//!   else Main file is not editable
+//!     Server ->> Client: Update(String: new text contents)
+//!   end
+//!   Client ->> IDE: Response(String: OK)
+//!   ```
+//!
+//! * If the current file's contents in the Client are edited, the Client sends
+//!   the IDE an `Update` with the revised contents.
+//!
+//! * When the PC goes to sleep then wakes up, the IDE client and the Editor
+//!   client both reconnect to the websocket URL containing their assigned ID.
+//!
+//! * If the Editor client or the IDE client are closed, they close their
+//!   websocket, which sends a `Close` message to the other websocket, causes it
+//!   to also close and ending the session.
+//!
+//! * If the server is stopped (or crashes), both clients shut down after
+//!   several reconnect retries.
+//!
+//! ### Editor-overlay filesystem
+//!
+//! When the Client displays a file provided by the IDE, that file may not exist
+//! in the filesystem (a newly-created document), the IDE's content may be newer
+//! than the filesystem content (an unsaved file), or the file may exist only in
+//! the filesystem (for examples, images referenced by a file). The Client loads
+//! files by sending HTTP requests to the Server with a URL which includes the
+//! path to the desired file. Therefore, the Server must first ask the IDE if it
+//! has the requested file; if so, it must deliver the IDE's file contents; if
+//! not, it must load thee requested file from the filesystem. This process --
+//! fetching from the IDE if possible, then falling back to the filesystem --
+//! defines the editor-overlay filesystem.
+//!
+//! #### Message IDs
+//!
+//! The message system connects the IDE, Server, and Client; all three can serve
+//! as the source or destination for a message. Any message sent should produce
+//! a Response message in return. Therefore, we need globally unique IDs for
+//! each message. To achieve this, the Server uses IDs that are multiples of 3
+//! (0, 3, 6, ...), the Client multiples of 3 + 1 (1, 4, 7, ...) and the IDE
+//! multiples of 3 + 2 (2, 5, 8, ...). A double-precision floating point number
+//! (the standard
+//! [numeric type](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Data_structures#number_type)
+//! in JavaScript) has a 53-bit mantissa, meaning IDs won't wrap around for a
+//! very long time.
 // Imports
 // -------
 //
@@ -215,8 +215,8 @@ use std::{
     sync::LazyLock,
 };
 
-use htmd::Node;
 // ### Third-party
+use htmd::Node;
 use log::{debug, error, warn};
 use rand::random;
 use regex::Regex;
@@ -233,9 +233,9 @@ use crate::{
     processing::{
         CodeChatForWeb, CodeMirror, CodeMirrorDiff, CodeMirrorDiffable, CodeMirrorDocBlock,
         CodeMirrorDocBlockVec, SourceFileMetadata, TranslationResultsString, UNICODE_CURSOR_MARKER,
-        byte_index_of, codechat_for_web_to_source, diff_code_mirror_doc_blocks, diff_str,
-        doc_block_html_to_markdown, minify, remove_tinymce_data, source_to_codechat_for_web_string,
-        transform_html,
+        byte_index_of, cache::CacheMap, codechat_for_web_to_source, diff_code_mirror_doc_blocks,
+        diff_str, doc_block_html_to_markdown, minify, remove_tinymce_data,
+        source_to_codechat_for_web_string, transform_html,
     },
     queue_send, queue_send_func,
     webserver::{
@@ -251,7 +251,7 @@ use crate::{
 // -------
 //
 // The max length of a message to show in the console.
-const MAX_MESSAGE_LENGTH: usize = 500;
+const MAX_MESSAGE_LENGTH: usize = 50000;
 
 /// A regex to determine the type of the first EOL. See 'PROCESSINGS\`.
 pub static EOL_FINDER: LazyLock<Regex> = LazyLock::new(|| Regex::new("[^\r\n]*(\r?\n)").unwrap());
@@ -402,6 +402,7 @@ struct TranslationTask {
     to_client_tx: Sender<EditorMessage>,
     from_client_rx: Receiver<EditorMessage>,
     from_http_rx: Receiver<ProcessingTaskHttpRequest>,
+    cache: CacheMap,
 
     // These parameters are internal state.
     /// The file currently loaded in the Client.
@@ -487,6 +488,7 @@ pub async fn translation_task(
             to_client_tx,
             from_client_rx,
             from_http_rx,
+            cache: app_state.cache.clone(),
             current_file: PathBuf::new(),
             load_file_requests: HashMap::new(),
             id: INITIAL_MESSAGE_ID + MESSAGE_ID_INCREMENT,
@@ -530,8 +532,8 @@ pub async fn translation_task(
                         EditorMessageContents::Result(_) => continue_loop = tt.ide_result(ide_message).await,
                         EditorMessageContents::Update(_) => continue_loop = tt.ide_update(ide_message).await,
                         EditorMessageContents::Capture(capture_event) => {
-                            // Capture messages affect both upload spooling and the
-                            // translation-layer context used for future
+                            // Capture messages affect both upload spooling and
+                            // the translation-layer context used for future
                             // server-classified write events.
                             let control_only = capture_control_only(&capture_event);
                             tt.capture_context.update_from_wire(&capture_event);
@@ -555,7 +557,11 @@ pub async fn translation_task(
                                             path_to_url(&tt.prefix_str, Some(&tt.connection_id_raw), &clean_file_path), Some(true)
                                         )
                                     }));
-                                    tt.current_file = file_path.into();
+                                    // Store the canonicalized path, not the
+                                    // path the IDE sent: the comparisons
+                                    // against `current_file` below assume every
+                                    // path has one spelling.
+                                    tt.current_file = clean_file_path;
                                     // Since this is a new file, mark it as
                                     // unsent in full.
                                     tt.sent_full = false;
@@ -579,7 +585,7 @@ pub async fn translation_task(
                             (http_request.file_path.clone(),
                             // Assign a version to this `LoadFile` request only
                             // if it's the current file and loaded as the file
-                            // to edit, not as the sidebar TOC. We can us a
+                            // to edit, not as the sidebar TOC. We can use a
                             // simple comparison, since both file names have
                             // already been canonicalized.
                             http_request.file_path == tt.current_file &&
@@ -639,7 +645,8 @@ pub async fn translation_task(
                         EditorMessageContents::Update(_) => continue_loop = tt.client_update(client_message).await,
                         EditorMessageContents::Capture(capture_event) => {
                             // Same capture handling as IDE messages: update the
-                            // context first, then store only non-control events.
+                            // context first, then store only non-control
+                            // events.
                             let control_only = capture_control_only(&capture_event);
                             tt.capture_context.update_from_wire(&capture_event);
                             if control_only {
@@ -928,6 +935,7 @@ impl TranslationTask {
                 (
                     file_to_response(
                         &http_request,
+                        &self.cache,
                         new_version,
                         &self.current_file,
                         Some(&file_contents),
@@ -955,6 +963,7 @@ impl TranslationTask {
                         (
                             file_to_response(
                                 &http_request,
+                                &self.cache,
                                 self.version,
                                 &self.current_file,
                                 option_file_contents.as_ref(),
@@ -1037,6 +1046,7 @@ impl TranslationTask {
                                     &self.current_file,
                                     contents.version,
                                     false,
+                                    &self.cache,
                                 ) {
                                     Err(err) => {
                                         Err(ResultErrTypes::CannotTranslateSource(err.to_string()))
@@ -1247,6 +1257,7 @@ impl TranslationTask {
                                 &clean_file_path,
                                 cfw.version,
                                 false,
+                                &self.cache,
                             ) && let TranslationResultsString::CodeChat(ccfw) = ccfws.0
                                 && let CodeMirrorDiffable::Plain(code_mirror_translated) =
                                     ccfw.source
@@ -1292,8 +1303,10 @@ impl TranslationTask {
                                             )))
                                 {
                                     // Use a whole number to avoid encoding
-                                    // differences with fractional values. Precision loss from the
-                                    // u64 -> f64 cast is fine, since we just need a unique-ish version number.
+                                    // differences with fractional values.
+                                    // Precision loss from the u64 -> f64 cast
+                                    // is fine, since we just need a unique-ish
+                                    // version number.
                                     cfw_version = {
                                         #[allow(clippy::cast_precision_loss)]
                                         let v = random::<u64>() as f64;
@@ -1636,7 +1649,7 @@ mod tests {
                 "capture_active": true,
             }),
         ));
-        // A session_start activates server-side translated write capture.
+        // A session\_start activates server-side translated write capture.
         assert!(
             context
                 .capture_event(CaptureEventType::WriteCode, None, serde_json::json!({}))
@@ -1649,7 +1662,7 @@ mod tests {
                 "capture_active": false,
             }),
         ));
-        // A session_end deactivates translated write capture so stale context
+        // A session\_end deactivates translated write capture so stale context
         // cannot continue generating spooled capture events.
         assert!(
             context

@@ -1,4 +1,4 @@
-# Copyright (C) 2025 Bryan A. Jones.
+# Copyright (C) 2026 Bryan A. Jones.
 #
 # This file is part of the CodeChat Editor.
 #
@@ -22,3 +22,5 @@
 $manifest_path = Join-Path -Path $PSScriptRoot -ChildPath ../builder/Cargo.toml
 echo $manifest_path
 cargo run --manifest-path=$manifest_path -- $args
+
+# CodeChat Editor lexer: python

@@ -1,4 +1,4 @@
-// Copyright (C) 2025 Bryan A. Jones.
+// Copyright (C) 2026 Bryan A. Jones.
 //
 // This file is part of the CodeChat Editor. The CodeChat Editor is free
 // software: you can redistribute it and/or modify it under the terms of the GNU
@@ -486,10 +486,9 @@ class DocBlockWidget extends WidgetType {
             `<div class="CodeChat-doc-indent" onmousedown="this.contentEditable='true'; event.stopPropagation();" onpaste="return false" data-delimiter=${JSON.stringify(
                 this.delimiter,
             )}>${this.indent}</div>` +
-            // The contents of this doc block. Make it focusable by assigning a
-            // tab stop, but not editable (until it's replaced by the TinyMCE
-            // editor).
-            `<div class="CodeChat-doc-contents" spellcheck="true" tabIndex="0">` +
+            // The contents of this doc block. Make it focusable but not
+            // editable (until it's replaced by the TinyMCE editor).
+            `<div class="CodeChat-doc-contents" spellcheck="true" tabIndex="-1">` +
             this.contents +
             "</div>";
         // TODO: this is an async call. However, CodeMirror doesn't provide
@@ -704,29 +703,29 @@ const getContents = (element: Element): [HTMLDivElement, boolean] => {
 };
 
 // Allow only spaces and delete/backspaces when editing the indent of a doc
-// block. This is registered (see `DocBlockPlugin`'s `focusin` handler below)
-// as a `beforeinput` listener on a doc block's indent div. It's defined here,
-// as a single stable function reference, rather than as an inline arrow
-// function created inside the `focusin` handler: `addEventListener` only
-// skips re-adding a listener that's reference-equal to one already
-// registered on the same target, and `focusin` can fire repeatedly on the
-// same (unchanged, and therefore DOM-preserving -- see `DocBlockWidget.eq`)
-// indent div, e.g. by blurring then refocusing it. A fresh arrow function
-// per `focusin` call would defeat that dedup and accumulate listeners.
+// block. This is registered (see `DocBlockPlugin`'s `focusin` handler below) as
+// a `beforeinput` listener on a doc block's indent div. It's defined here, as a
+// single stable function reference, rather than as an inline arrow function
+// created inside the `focusin` handler: `addEventListener` only skips re-adding
+// a listener that's reference-equal to one already registered on the same
+// target, and `focusin` can fire repeatedly on the same (unchanged, and
+// therefore DOM-preserving -- see `DocBlockWidget.eq`) indent div, e.g. by
+// blurring then refocusing it. A fresh arrow function per `focusin` call would
+// defeat that dedup and accumulate listeners.
 const onIndentBeforeinput = (event: InputEvent) => {
     // Only modify the behavior of inserts.
     if (event.data) {
-        // Block any insert that's not an insert of spaces.
-        // TODO: need to support tabs.
+        // Block any insert that's not an insert of spaces. TODO: need to
+        // support tabs.
         if (event.data !== " ".repeat(event.data.length)) {
             event.preventDefault();
         }
     }
 };
 
-// Signal that a doc block's indent is dirty. See `onIndentBeforeinput`
-// above for why this must be a stable function reference rather than an
-// inline closure.
+// Signal that a doc block's indent is dirty. See `onIndentBeforeinput` above
+// for why this must be a stable function reference rather than an inline
+// closure.
 const onIndentInput = (event: Event) => {
     const target = event.target;
     if (target instanceof HTMLElement) {
@@ -894,8 +893,8 @@ const docBlockStartingAt = (
     return found;
 };
 
-// Same as `docBlockStartingAt`, but looks for a doc block that ends exactly
-// at `pos`.
+// Same as `docBlockStartingAt`, but looks for a doc block that ends exactly at
+// `pos`.
 const docBlockEndingAt = (
     view: EditorView,
     pos: number,
@@ -1133,8 +1132,8 @@ export const DocBlockPlugin = ViewPlugin.fromClass(
                             // empty `selectionPath`, silently dropping this
                             // edge placement and leaving the caret wherever
                             // TinyMCE's own init happens to put it (its start).
-                            // Anchoring on a text node instead keeps the walk
-                            // -- and thus the edge placement -- intact.
+                            // Anchoring on a text node instead keeps the
+                            // walk -- and thus the edge placement -- intact.
                             let edgeNode: Node = contents;
                             while (
                                 atEnd ? edgeNode.lastChild : edgeNode.firstChild
@@ -1357,7 +1356,8 @@ export const DocBlockPlugin = ViewPlugin.fromClass(
                                 resolve(),
                         );
                         // Untypeset math in the old doc block and the current
-                        // doc block before moving its contents around.
+                        // doc block before moving its contents around. TODO:
+                        // `tinymceDiv === null` in production at least once.
                         const tinymceDiv =
                             document.getElementById(TINYMCE_INST)!;
                         mathJaxUnTypeset(tinymceDiv);
@@ -1383,7 +1383,7 @@ export const DocBlockPlugin = ViewPlugin.fromClass(
                             // If the contents aren't editable, then the div
                             // won't receive a `focusin` message (it instead
                             // goes to a CodeMirror layer).
-                            oldContentsDiv.tabIndex = 0;
+                            oldContentsDiv.tabIndex = -1;
                             oldContentsDiv.innerHTML =
                                 tinymceInstance()!.save();
                             tinymceDiv.parentNode!.insertBefore(
@@ -1560,11 +1560,12 @@ export const codeMirrorLoad = async (
             // For reloads, we need to remove previous instances; otherwise, Bad
             // Things happen.
             tinymce?.remove();
-            // Per the [docs](https://codemirror.net/docs/ref/#view.EditorView.destroy),
-            // this must be called to clean up the view (DOM-external state
-            // such as global event listeners) before discarding it; simply
-            // replacing `codechatBody`'s contents below doesn't do this and
-            // would otherwise leak the old view on every reload.
+            // Per the
+            // [docs](https://codemirror.net/docs/ref/#view.EditorView.destroy),
+            // this must be called to clean up the view (DOM-external state such
+            // as global event listeners) before discarding it; simply replacing
+            // `codechatBody`'s contents below doesn't do this and would
+            // otherwise leak the old view on every reload.
             currentView.destroy();
         }
 
@@ -1683,6 +1684,16 @@ export const codeMirrorLoad = async (
                     parser,
                     basicSetup,
                     EditorView.lineWrapping,
+                    // CodeMirror marks its editing surface `role="textbox"` but
+                    // supplies no accessible name, so a screen reader announces
+                    // the element holding the user's source code as an
+                    // unlabeled text field. Point it at the filename the Server
+                    // renders into the page header, which names the file and
+                    // its directory: the label then follows whatever file is
+                    // open without this code having to learn the path.
+                    EditorView.contentAttributes.of({
+                        "aria-labelledby": "CodeChat-filename",
+                    }),
                     exceptionSink,
                     autosaveExtension,
                     // Make tab an indent per the
@@ -1903,8 +1914,8 @@ export const setCodeMirrorPositions = (
     }
     updateMessageContents.cursor_position = cursorPosition;
 
-    // `currentView.viewport.from` isn't accurate, since it's not really the
-    // top line, but a margin before it; see the
+    // `currentView.viewport.from` isn't accurate, since it's not really the top
+    // line, but a margin before it; see the
     // [docs](https://codemirror.net/docs/ref/#view.EditorView.viewport).
     // Instead, use
     // [this approach](https://discuss.codemirror.net/t/how-can-i-get-the-top-line-number-in-real-time/9404).
@@ -1921,8 +1932,29 @@ const reportError = (text: string) => {
 };
 
 const haltOnError = (text: string): never => {
-    document.getElementById("error-overlay")!.style.display = "block";
+    // Name the failure inside the overlay, which `aria-describedby` points at.
+    // The error handler also turns this text into a toast, but a toast lies
+    // outside the modal overlay, where a screen reader honoring `aria-modal`
+    // won't read it; the overlay must therefore describe itself.
+    document.getElementById("error-overlay-message")!.textContent = text;
+    const errorOverlay = document.getElementById("error-overlay")!;
+    errorOverlay.style.display = "block";
+    // The overlay only paints over the page it replaces; the elements beneath
+    // it stay focusable, so tabbing walks into a UI which is no longer visible
+    // and no longer works. Marking them `inert` removes them from both the tab
+    // order and the accessibility tree. Toastify appends its toasts to `body`
+    // as well; exempt them, since the error report which follows this call
+    // arrives as a toast and must stay readable and dismissable.
+    for (const element of document.body.children) {
+        if (
+            element !== errorOverlay &&
+            element instanceof HTMLElement &&
+            !element.classList.contains("toastify")
+        ) {
+            element.inert = true;
+        }
+    }
+    errorOverlay.focus();
     console.error(text);
-    // The error handler will make this a toast.
     throw new Error(text);
 };

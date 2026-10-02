@@ -1,4 +1,4 @@
-// Copyright (C) 2025 Bryan A. Jones.
+// Copyright (C) 2026 Bryan A. Jones.
 //
 // This file is part of the CodeChat Editor. The CodeChat Editor is free
 // software: you can redistribute it and/or modify it under the terms of the GNU
@@ -13,8 +13,8 @@
 // You should have received a copy of the GNU General Public License along with
 // the CodeChat Editor. If not, see
 // [http://www.gnu.org/licenses](http://www.gnu.org/licenses).
-/// `webserver.rs` -- Serve CodeChat Editor Client webpages
-/// =======================================================
+//! `webserver.rs` -- Serve CodeChat Editor Client webpages
+//! =======================================================
 // Submodules
 // ----------
 #[cfg(test)]
@@ -31,7 +31,7 @@ use std::{
     hash::BuildHasher,
     io,
     net::SocketAddr,
-    path::{self, MAIN_SEPARATOR_STR, Path, PathBuf},
+    path::{self, Component, MAIN_SEPARATOR_STR, Path, PathBuf, Prefix},
     str::FromStr,
     string::FromUtf8Error,
     sync::{Arc, LazyLock, Mutex},
@@ -65,7 +65,7 @@ use log4rs::{
 };
 use mime::Mime;
 use mime_guess;
-use path_slash::{PathBufExt, PathExt};
+use path_slash::PathBufExt;
 use serde::{Deserialize, Serialize};
 use serde_json;
 use tokio::{
@@ -86,8 +86,8 @@ use url::Url;
 // ### Local
 //use crate::capture::EventCapture;
 use crate::processing::{
-    CodeChatForWeb, SourceToCodeChatForWebError, TranslationResultsString, find_path_to_toc,
-    source_to_codechat_for_web_string,
+    CodeChatForWeb, SourceToCodeChatForWebError, TranslationResultsString, cache::CacheMap,
+    find_path_to_toc, source_to_codechat_for_web_string,
 };
 
 use crate::capture::{
@@ -371,8 +371,8 @@ pub struct UpdateMessageContents {
 pub enum CursorPosition {
     /// The line the cursor is on. Use `u32`, not `u64`: JSON/JS `number` is an
     /// f64, which loses precision above 2^53, and `u64` values aren't
-    /// type-checked against that limit, so a `u64` here could silently
-    /// corrupt on the JS side. `u32`'s max (~4.3 billion) is always exactly
+    /// type-checked against that limit, so a `u64` here could silently corrupt
+    /// on the JS side. `u32`'s max (~4.3 billion) is always exactly
     /// representable, and no real source file has that many lines anyway.
     Line(u32),
     /// The exact location of the cursor in the HTML DOM. Only the Client and
@@ -415,6 +415,8 @@ pub struct AppState {
     credentials: Option<Credentials>,
     // Added to support capture - JDS - 11/2025
     pub capture: Option<EventCapture>,
+    /// A hash of project path to Cache.
+    pub cache: CacheMap,
 }
 
 pub type WebAppState = web::Data<AppState>;
@@ -454,6 +456,15 @@ macro_rules! queue_send_func {
     };
 }
 
+// See
+// [Static Assertions in Rust](https://www.kdab.com/static-assertions-in-rust/).
+#[macro_export]
+macro_rules! const_assert {
+    ($cond:expr) => {
+        const _: () = assert!($cond);
+    };
+}
+
 /// Globals
 /// -------
 // The timeout for a reply from a websocket, in ms. Use a short timeout to speed
@@ -468,12 +479,16 @@ pub const REPLY_TIMEOUT_MS: Duration = if cfg!(test) {
 /// this server.
 const WEBSOCKET_PING_DELAY: Duration = Duration::from_secs(2);
 
-/// A few message IDs reserve for used during startup or for sending errors.
+/// A few message IDs reserved for use during startup or for sending errors.
 pub const RESERVED_MESSAGE_ID: f64 = 0.0;
 /// The initial value for the server's message ID.
 pub const INITIAL_MESSAGE_ID: f64 = RESERVED_MESSAGE_ID + 3.0;
-// The initial value for a Client.
+// The initial websocket message ID for a Client. This value **must** be the
+// same on the Client. This is a manual process, since
+// [ts-rs](https://docs.rs/ts-rs/latest/ts_rs/) only generates types, not
+// constants. <fragment id="cc-kK31yjXjJd"></fragment>
 pub const INITIAL_CLIENT_MESSAGE_ID: f64 = INITIAL_MESSAGE_ID + 1.0;
+const_assert!(INITIAL_CLIENT_MESSAGE_ID == 4.0);
 // The initial value for an IDE.
 pub const INITIAL_IDE_MESSAGE_ID: f64 = INITIAL_CLIENT_MESSAGE_ID + 1.0;
 /// The increment for a message ID. Since the Client, IDE, and Server all
@@ -509,6 +524,7 @@ static BUNDLED_FILES_MAP: LazyLock<HashMap<String, String>> = LazyLock::new(|| {
     hmm
 });
 
+// <fragment id="oy0vDtlUs6"></fragment>
 static CODECHAT_EDITOR_FRAMEWORK_JS: LazyLock<String> = LazyLock::new(|| {
     BUNDLED_FILES_MAP
         .get("CodeChatEditorFramework.js")
@@ -527,28 +543,27 @@ static CODECHAT_EDITOR_PROJECT_CSS: LazyLock<String> = LazyLock::new(|| {
 // a development build.
 pub fn set_root_path(
     // The root path to use, already resolved by the caller. Since the correct
-    // value depends entirely on that caller's own build/deployment layout
-    // (an installed VSCode extension's directory, a dev build's location
-    // under `target/`, a `cargo dist`-packaged binary's directory, ...), this
+    // value depends entirely on that caller's own build/deployment layout (an
+    // installed VSCode extension's directory, a dev build's location under
+    // `target/`, a `cargo dist`-packaged binary's directory, ...), this
     // function does no further adjustment -- it's the caller's job to land on
     // the right directory, typically using its own `cfg!(debug_assertions)`/
     // `cfg!(test)` checks. See `extensions/standalone/src/main.rs`'s
     // `root_path` for an example.
     base_path: &Path,
 ) -> io::Result<()> {
-    *ROOT_PATH.lock().unwrap() = base_path.canonicalize()?;
+    *ROOT_PATH.lock().unwrap() = canonicalize(base_path)?;
     Ok(())
 }
 
 // A `base_path` for this package's own test suites to pass to
 // `set_root_path`/`main` when they start a real webserver in-process
 // (`ide::vscode::tests` and the `tests/overall` integration tests). Not
-// `#[cfg(test)]`-gated: integration tests under
-// `tests/` link this crate as a normal (non-`--test`) dependency, so a
-// `#[cfg(test)]` item wouldn't be visible to them. All these test binaries
-// are built under `server/target/debug/deps/...` (one directory deeper than a
-// plain `cargo build`'s `server/target/debug/`), or one directory deeper
-// still under `cargo llvm-cov`.
+// `#[cfg(test)]`-gated: integration tests under `tests/` link this crate as a
+// normal (non-`--test`) dependency, so a `#[cfg(test)]` item wouldn't be
+// visible to them. All these test binaries are built under the workspace's
+// shared `target/debug/deps/...`, which sits directly in the repository root,
+// or one directory deeper still under `cargo llvm-cov`.
 #[must_use]
 pub fn test_root_path() -> PathBuf {
     let exe_dir = env::current_exe()
@@ -561,7 +576,8 @@ pub fn test_root_path() -> PathBuf {
     } else {
         exe_dir
     };
-    exe_dir.join("../../../..")
+    // `deps` -> `debug` -> `target` -> the repository root.
+    exe_dir.join("../../..")
 }
 
 // Webserver functionality
@@ -596,9 +612,9 @@ pub fn log_capture_event(app_state: &WebAppState, wire: CaptureEventWire) -> Cap
             serde_json::json!({ "value": data })
         };
         // Prefer hashing a raw local path on the server so all capture
-        // transports use the same path-to-hash rule. The raw path is not stored;
-        // `file_hash` remains only as a backward-compatible/server-originated
-        // alternative.
+        // transports use the same path-to-hash rule. The raw path is not
+        // stored; `file_hash` remains only as a
+        // backward-compatible/server-originated alternative.
         let file_hash = wire
             .file_path
             .as_deref()
@@ -670,13 +686,13 @@ pub fn get_client_framework(
         }
     };
     // `connection_id` may be attacker-controlled (for example, the VSCode
-    // extension's `/vsc/cf/{connection_id}` endpoint takes it directly from
-    // the URL). Since `ws_url` is embedded verbatim inside a `<script>`
-    // block below, escape `<` so a value such as `</script><script>...`
-    // can't prematurely close the script element and inject markup/script
-    // that the HTML parser would otherwise treat as a new tag. JSON string
-    // escapes (produced above) don't cover this, since `<` and `/` aren't
-    // special in JSON.
+    // extension's `/vsc/cf/{connection_id}` endpoint takes it directly from the
+    // URL). Since `ws_url` is embedded verbatim inside a `<script>` block
+    // below, escape `<` so a value such as `</script><script>...` can't
+    // prematurely close the script element and inject markup/script that the
+    // HTML parser would otherwise treat as a new tag. JSON string escapes
+    // (produced above) don't cover this, since `<` and `/` aren't special in
+    // JSON.
     let ws_url = ws_url.replace('<', "\\u003C");
 
     // Build and return the webpage.
@@ -687,6 +703,7 @@ pub fn get_client_framework(
             <head>
                 <meta charset="UTF-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1">
+                <meta name="description" content="A programmer's word processor: the CodeChat Editor interleaves your source code with its documentation, rendering comments as rich text you can edit in place.">
                 <title>The CodeChat Editor</title>
                 <script type="module">
                     import {{ pageInit }} from "/{}"
@@ -694,21 +711,40 @@ pub fn get_client_framework(
                 </script>
             </head>
             <body style="margin: 0px; padding: 0px; overflow: hidden">
-                <iframe id="CodeChat-iframe"
-                    style="width:100%; height:100vh; border:none;"
-                    srcdoc="<!DOCTYPE html>
-                    <html lang='en'>
-                        <body style='background-color:#f0f0ff'>
-                            <div style='display:flex;justify-content:center;align-items:center;height:95vh;'>
-                                <div style='text-align:center;font-family:Trebuchet MS;'>
-                                    <h1>The CodeChat Editor</h1>
-                                    <p>Waiting for initial render. Switch the active source code window to begin.</p>
+                <main>
+                    <!-- This page is a shell whose only content is the iframe
+                         below, so it has nothing to title visibly; the heading
+                         is hidden from sight but left in the accessibility
+                         tree, where it names the page for a screen reader
+                         moving by heading. Hide it by clipping rather than by
+                         `display: none`, which would remove it from that tree
+                         as well. -->
+                    <h1 style="position: absolute;
+                               width: 1px;
+                               height: 1px;
+                               margin: -1px;
+                               padding: 0px;
+                               border: 0px;
+                               overflow: hidden;
+                               clip-path: inset(50%);
+                               white-space: nowrap">The CodeChat Editor</h1>
+                    <iframe id="CodeChat-iframe"
+                        style="width:100%; height:100vh; border:none;"
+                        title="The CodeChat Editor main window"
+                        srcdoc="<!DOCTYPE html>
+                        <html lang='en'>
+                            <body style='background-color:#f0f0ff'>
+                                <div style='display:flex;justify-content:center;align-items:center;height:95vh;'>
+                                    <div style='text-align:center;font-family:Trebuchet MS;'>
+                                        <h1>The CodeChat Editor</h1>
+                                        <p>Waiting for initial render. Switch the active source code window to begin.</p>
+                                    </div>
                                 </div>
-                            </div>
-                        </body>
-                    </html>"
-                >
-                </iframe>
+                            </body>
+                        </html>"
+                    >
+                    </iframe>
+                </main>
             </body>
         </html>"#,
         *CODECHAT_EDITOR_FRAMEWORK_JS
@@ -716,6 +752,41 @@ pub fn get_client_framework(
 }
 
 // ### Serve file
+/// A filesystem route hands its handler the file's path percent-decoded, with
+/// the separator which `path_to_url` dropped still missing. Restore it, so that
+/// the result names the same file the URL was built from. Every route which
+/// captures a file's path this way -- the Client's `fsc` route and the
+/// standalone editor's `fsb` directory browser -- must agree on this
+/// conversion, so they share it.
+#[must_use]
+pub fn request_path_to_file_path(
+    // The file path captured by the route, such as `C:/foo/bar.py`.
+    request_file_path: &str,
+    // Output: the path, ready to canonicalize.
+) -> String {
+    if cfg!(target_os = "windows") {
+        // HTTP doesn't treat a backslash as a path separator, but Windows does.
+        // Re-encode any backslash, so that both agree on where this path's
+        // components divide.
+        let backslashes_encoded = request_file_path.replace('\\', "%5C");
+        // A Windows path begins with a drive letter, unless it names a network
+        // share: `path_to_url` spells a UNC path as `//server/share/...`, and
+        // the route's match absorbs the first of those two separators along
+        // with the one which ends the connection ID.
+        if backslashes_encoded.starts_with('/') {
+            format!("/{backslashes_encoded}")
+        } else {
+            backslashes_encoded
+        }
+    } else {
+        // Restore the leading slash which the route's match absorbed. An
+        // unsaved file has no location on disk, so `try_canonicalize` leaves
+        // its path relative; `url_to_path` prepends the slash to that path too,
+        // so both conversions name such a file the same way.
+        format!("/{request_file_path}")
+    }
+}
+
 /// This could be a plain text file (for example, one not recognized as source
 /// code that this program supports), a binary file (image/video/etc.), a
 /// CodeChat Editor file, or a non-existent file. Determine which type this file
@@ -727,19 +798,7 @@ pub async fn filesystem_endpoint(
     req: &HttpRequest,
     app_state: &WebAppState,
 ) -> HttpResponse {
-    // On Windows, backslashes in the `request_file_path` will be treated as
-    // path separators; however, HTTP does not treat them as path separators.
-    // Therefore, re-encode them to prevent inconsistency between the way HTTP
-    // and this program interpret file paths. On OS X/Linux, the path starts
-    // with a leading slash, which gets absorbed into the URL to prevent a URL
-    // such as "/fw/fsc/1//foo/bar/...". Restore it here.
-    #[cfg(target_os = "windows")]
-    let fixed_file_path = request_file_path.replace('\\', "%5C");
-    // On OS X/Linux, the path starts with a leading slash, which gets absorbed
-    // into the URL to prevent a URL such as "/fw/fsc/1//foo/bar/...". Restore
-    // it here.
-    #[cfg(not(target_os = "windows"))]
-    let fixed_file_path = format!("/{request_file_path}");
+    let fixed_file_path = request_path_to_file_path(&request_file_path);
     // TODO: security: ensure the resulting path is within the current project /
     // some expected directory.
     let file_path = match try_canonicalize(&fixed_file_path) {
@@ -814,22 +873,20 @@ pub async fn filesystem_endpoint(
             SimpleHttpResponse::Raw(body, content_type) => {
                 HttpResponse::Ok().content_type(content_type).body(body)
             }
-            SimpleHttpResponse::Bin(path) => {
-                match actix_files::NamedFile::open_async(&path).await {
-                    Ok(mut v) => {
-                        if path.extension().is_some_and(|ext| ext == "pdf") {
-                            let mut cd = v.content_disposition().clone();
-                            cd.disposition = DispositionType::Inline;
-                            v = v.set_content_disposition(cd);
-                        }
-                        v.into_response(req)
+            SimpleHttpResponse::Bin(path) => match actix_files::NamedFile::open(&path) {
+                Ok(mut v) => {
+                    if path.extension().is_some_and(|ext| ext == "pdf") {
+                        let mut cd = v.content_disposition().clone();
+                        cd.disposition = DispositionType::Inline;
+                        v = v.set_content_disposition(cd);
                     }
-                    Err(err) => http_not_found(&format!(
-                        "Error opening file \"{}\": {err}.",
-                        path.display()
-                    )),
+                    v.into_response(req)
                 }
-            }
+                Err(err) => http_not_found(&format!(
+                    "Error opening file \"{}\": {err}.",
+                    path.display()
+                )),
+            },
         },
         Err(err) => http_not_found(&format!("Error: {err}")),
     }
@@ -860,6 +917,8 @@ pub async fn try_read_as_text(file: &mut File) -> Option<String> {
 pub async fn file_to_response(
     // The HTTP request presented to the processing task.
     http_request: &ProcessingTaskHttpRequest,
+    // The map of project caches.
+    cache: &CacheMap,
     // The version of this file.
     version: f64,
     // Path to the file currently being edited. This path should be cleaned by
@@ -894,6 +953,7 @@ pub async fn file_to_response(
         ""
     };
     let codechat_editor_js_name = format!("CodeChatEditor{js_test_suffix}.js");
+    // <fragment id="POHIjx6j3N"></fragment>.
     let Some(codechat_editor_js) = BUNDLED_FILES_MAP.get(&codechat_editor_js_name) else {
         return (
             SimpleHttpResponse::Err(SimpleHttpResponseError::BundledFileNotFound(
@@ -925,6 +985,7 @@ pub async fn file_to_response(
                 file_path,
                 version,
                 is_toc,
+                cache,
             )
         } else {
             // If this isn't the current file, then don't parse it.
@@ -952,7 +1013,7 @@ pub async fn file_to_response(
     let (sidebar_iframe, sidebar_css) = if is_project {
         (
             format!(
-                r#"<nav id="CodeChat-sidebar-nav"><iframe src="{}?mode=toc" id="CodeChat-sidebar"></iframe></nav>"#,
+                r#"<nav id="CodeChat-sidebar-nav"><iframe src="{}?mode=toc" id="CodeChat-sidebar" title="CodeChat Editor table of contents"></iframe></nav>"#,
                 escape_attribute(path_to_toc.unwrap().to_slash_lossy())
             ),
             format!(
@@ -986,12 +1047,12 @@ pub async fn file_to_response(
                     // For the [PDF.js viewer](#pdf.js), pass the file to view
                     // as the query parameter.
                     format!(
-                        r#"<iframe src="/static/pdfjs-main.html?{}" style="height: 100vh; border: 0px" id="CodeChat-contents"></iframe>"#,
+                        r#"<iframe src="/static/pdfjs-main.html?{}" style="height: 100vh; border: 0px" id="CodeChat-contents" title="CodeChat Editor contents"></iframe>"#,
                         escape_attribute(&http_request.url)
                     )
                 } else {
                     format!(
-                        r#"<iframe src="{}?raw" style="height: 100vh" id="CodeChat-contents"></iframe>"#,
+                        r#"<iframe src="{}?raw" style="height: 100vh" id="CodeChat-contents" title="CodeChat Editor contents"></iframe>"#,
                         escape_attribute(file_name)
                     )
                 },
@@ -1033,9 +1094,11 @@ pub async fn file_to_response(
                             <link rel="stylesheet" href="/{codechat_editor_css}">
                         </head>
                         <body class="CodeChat-theme-light">
-                            <div class="CodeChat-TOC">
-                                {html}
-                            </div>
+                            <nav>
+                                <div class="CodeChat-TOC">
+                                    {html}
+                                </div>
+                            </nav>
                         </body>
                     </html>"#,
                 )),
@@ -1073,7 +1136,21 @@ pub async fn file_to_response(
                     {sidebar_css}
                 </head>
                 <body class="CodeChat-theme-light">
-                    <div id="error-overlay"><h1 class="centered-text">Fatal error</h1></div>
+                    <!-- The overlay is a modal announcement: `haltOnError` in
+                         `CodeMirror-integration.mts` fills in the message,
+                         reveals it, then moves focus here. It uses
+                         `alertdialog` rather than `alert` because only a
+                         dialog role supports `aria-modal`, and that modality
+                         is what tells a screen reader to ignore the dead UI
+                         behind the overlay. -->
+                    <div id="error-overlay" role="alertdialog" aria-modal="true"
+                        aria-labelledby="error-overlay-title"
+                        aria-describedby="error-overlay-message" tabindex="-1">
+                        <div class="centered-text">
+                            <h1 id="error-overlay-title">Fatal error</h1>
+                            <p id="error-overlay-message"></p>
+                        </div>
+                    </div>
                     {sidebar_iframe}
                     <div id="CodeChat-contents">
                         <header id="CodeChat-top">
@@ -1170,7 +1247,7 @@ fn make_simple_viewer(http_request: &ProcessingTaskHttpRequest, html: &str) -> S
                         <link rel="stylesheet" href="/{}">
                     </head>
                     <body class="CodeChat-theme-light">
-                        <iframe src="{path_to_toc}?mode=toc" id="CodeChat-sidebar"></iframe>
+                        <iframe src="{path_to_toc}?mode=toc" id="CodeChat-sidebar" title="CodeChat Editor table of contents"></iframe>
                         {html}
                     </body>
                 </html>"#,
@@ -1347,7 +1424,8 @@ pub fn client_websocket<S: BuildHasher + 'static>(
                                     break;
                                 }
 
-                                // Lint allow on `match` above allows this: it's a catch-all for anything not know here.
+                                // Lint allow on `match` above allows this: it's
+                                // a catch-all for anything not know here.
                                 other => {
                                     warn!("Unexpected message {other:?}");
                                     break;
@@ -1610,16 +1688,17 @@ fn make_app_data_with_capture_spool(
         connection_id: Mutex::new(HashSet::new()),
         credentials,
         capture,
+        cache: Arc::new(Mutex::new(HashMap::new())),
     })
 }
 
 // A callback which adds IDE-specific routes to the web application.
 // `HttpServer::new` builds a fresh `App` per worker, and its inner service
-// factory type (`AppEntry`) is private to `actix-web`; a plain
-// `Fn(App<T>) -> App<T>` closure can't be named as a field or parameter type
-// generically enough to pass through `setup_server`. This trait sidesteps
-// that: its method is itself generic over `T`, so a single implementor works
-// for whatever `T` `HttpServer::new` picks internally.
+// factory type (`AppEntry`) is private to `actix-web`; a plain `Fn(App<T>) ->
+// App<T>` closure can't be named as a field or parameter type generically
+// enough to pass through `setup_server`. This trait sidesteps that: its method
+// is itself generic over `T`, so a single implementor works for whatever `T`
+// `HttpServer::new` picks internally.
 pub trait RegisterRoutes: Clone + Send + 'static {
     fn register<T>(&self, app: App<T>) -> App<T>
     where
@@ -1639,8 +1718,8 @@ impl RegisterRoutes for NoExtraRoutes {
     }
 }
 
-// Combine two `RegisterRoutes` implementors into one, so a caller (such as
-// the standalone CLI) can opt into more than one route group.
+// Combine two `RegisterRoutes` implementors into one, so a caller (such as the
+// standalone CLI) can opt into more than one route group.
 impl<A: RegisterRoutes, B: RegisterRoutes> RegisterRoutes for (A, B) {
     fn register<T>(&self, app: App<T>) -> App<T>
     where
@@ -1653,9 +1732,9 @@ impl<A: RegisterRoutes, B: RegisterRoutes> RegisterRoutes for (A, B) {
 // Registers the `/ping` and `/stop` process-lifecycle routes. These are only
 // meaningful when the server runs as an independent OS process that another
 // process must poll for liveness and can ask to shut down over HTTP -- the
-// standalone CLI's `start`/`stop` subcommands. The VSCode extension embeds
-// the server in-process and controls its lifecycle directly via
-// [`crate::ide::CodeChatEditorServer::stop_server`], so it doesn't need these
+// standalone CLI's `start`/`stop` subcommands. The VSCode extension embeds the
+// server in-process and controls its lifecycle directly via
+// \[`crate::ide::CodeChatEditorServer::stop_server`\], so it doesn't need these
 // routes. This crate's own test harness (`ide::vscode::tests`) also registers
 // them, reusing `/ping` to detect when its shared test webserver has started.
 #[derive(Clone)]
@@ -1670,11 +1749,11 @@ impl RegisterRoutes for LifecycleRoutes {
     }
 }
 
-// Configure the web application with the core, IDE-agnostic routes (static
-// file serving). Every IDE integration (VSCode, the filewatcher IDE, ...)
-// registers its own routes via `register_routes`, invoked after the core
-// routes are added. I'd like to make this return an `App<AppEntry>`, but
-// `AppEntry` is a private module.
+// Configure the web application with the core, IDE-agnostic routes (static file
+// serving). Every IDE integration (VSCode, the filewatcher IDE, ...) registers
+// its own routes via `register_routes`, invoked after the core routes are
+// added. I'd like to make this return an `App<AppEntry>`, but `AppEntry` is a
+// private module.
 pub fn configure_app<T>(
     app: App<T>,
     app_data: &WebAppState,
@@ -1757,27 +1836,101 @@ pub fn url_to_path(
     // Strip the expected prefix; the remainder is a file path.
     let path_segments_suffix = path_segments_vec[expected_prefix.len() + 1..].to_vec();
 
-    // URL decode each segment; however, re-encode the `\`, since this isn't a
-    // valid path separator in a URL but is incorrectly treated as such on
-    // Windows.
+    // URL decode each segment. On Windows, re-encode the `\`, since this isn't
+    // a valid path separator in a URL but is incorrectly treated as such by
+    // Windows; `request_path_to_file_path` does the same to the path a route
+    // captures. On OS X/Linux a `\` is an ordinary character in a file name, so
+    // leave it alone.
     let path_segments_suffix_decoded = path_segments_suffix
         .iter()
         .map(|path_segment| {
             urlencoding::decode(path_segment)
                 .map_err(UrlToPathError::UnableToDecode)
-                .map(|path_seg| path_seg.replace('\\', "%5C"))
+                .map(|path_seg| {
+                    if cfg!(target_os = "windows") {
+                        path_seg.replace('\\', "%5C")
+                    } else {
+                        path_seg.into_owned()
+                    }
+                })
         })
         .collect::<Result<Vec<String>, UrlToPathError>>()?;
 
     // Join the segments into a path.
     let path_str = path_segments_suffix_decoded.join(MAIN_SEPARATOR_STR);
 
-    // On non-Windows systems, the path should start with a `/`. Windows paths
-    // should already start with a drive letter.
-    #[cfg(not(target_os = "windows"))]
-    let path_str = "/".to_string() + &path_str;
+    // Restore the separator which `path_to_url` dropped. On non-Windows
+    // systems, that's the leading `/` of every absolute path. A Windows path
+    // instead begins with a drive letter, unless it names a network share: an
+    // empty first segment marks the `//server/share` spelling of a UNC path,
+    // which needs the first of its two leading separators back.
+    let path_str = if cfg!(target_os = "windows") {
+        if path_segments_suffix_decoded
+            .first()
+            .is_some_and(String::is_empty)
+        {
+            MAIN_SEPARATOR_STR.to_string() + &path_str
+        } else {
+            path_str
+        }
+    } else {
+        MAIN_SEPARATOR_STR.to_string() + &path_str
+    };
 
     try_canonicalize(&path_str).map_err(UrlToPathError::UrlNotFile)
+}
+
+// The prefix `canonicalize` produces for a file on a network share.
+const VERBATIM_UNC_PREFIX: &str = r"\\?\UNC\";
+
+/// Decide whether the components of a path on a network share survive the loss
+/// of that prefix. `dunce` asks this question only of a path on a drive, so ask
+/// it that way instead: a server or share name obeys the rules which apply to a
+/// file name, and the drive's longer prefix only makes dunce's length check
+/// stricter than it needs to be here.
+fn is_safe_to_strip_verbatim_unc(
+    // A path on a network share, with the verbatim prefix already removed:
+    // `server\share\...`.
+    share_path: &str,
+    // Output: whether the path can be spelled without the verbatim prefix.
+) -> bool {
+    let as_disk_path = PathBuf::from(format!(r"\\?\C:\{share_path}"));
+    simplified(&as_disk_path) != as_disk_path.as_path()
+}
+
+/// Convert a path to the most compatible form which still names the same file.
+/// `dunce::simplified` does this for a path on a drive, but leaves a path on a
+/// network share in the verbatim `\\?\UNC\server\share\...` form which
+/// `canonicalize` returns. Reduce that to `\\server\share\...`, the spelling
+/// IDEs send and the rest of this program compares against.
+#[must_use]
+pub fn simplify(
+    // The path to convert.
+    path: &Path,
+    // Output: the path, in its most compatible form.
+) -> Cow<'_, Path> {
+    match path
+        .to_str()
+        .and_then(|path_str| path_str.strip_prefix(VERBATIM_UNC_PREFIX))
+    {
+        Some(share_path) if is_safe_to_strip_verbatim_unc(share_path) => {
+            Cow::Owned(PathBuf::from(format!(r"\\{share_path}")))
+        }
+        _ => Cow::Borrowed(simplified(path)),
+    }
+}
+
+/// `std::fs::canonicalize`, followed by `simplify`, so that every canonical
+/// path in this program uses one spelling of a given file. Prefer this to
+/// `std::fs::canonicalize`, whose result on Windows names a file on a network
+/// share in a verbatim form which matches neither the path an IDE sends nor the
+/// URL the Client requests.
+pub fn canonicalize(
+    // The path to canonicalize; it must name an existing file.
+    path: &Path,
+    // Output: the canonical path, or the error `canonicalize` reported.
+) -> io::Result<PathBuf> {
+    Ok(simplify(&fs::canonicalize(path)?).into_owned())
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -1800,8 +1953,8 @@ pub fn try_canonicalize(file_path: &str) -> Result<PathBuf, TryCanonicalizeError
             file_path: file_path.to_string(),
             error: err.to_string(),
         }),
-        Ok(path_buf) => match path_buf.canonicalize() {
-            Ok(p) => Ok(PathBuf::from(simplified(&p))),
+        Ok(path_buf) => match canonicalize(&path_buf) {
+            Ok(p) => Ok(p),
             // [Canonicalize](https://doc.rust-lang.org/stable/std/fs/fn.canonicalize.html#errors)
             // fails if the path doesn't exist. For unsaved files, this is
             // expected; in this case, we can't correct case based on the actual
@@ -1828,21 +1981,65 @@ pub fn try_canonicalize(file_path: &str) -> Result<PathBuf, TryCanonicalizeError
 
 // Given a file path, convert it to a URL, encoding as necessary.
 #[must_use]
-pub fn path_to_url(prefix: &str, connection_id: Option<&str>, file_path: &Path) -> String {
-    // First, convert the path to use forward slashes.
-    let pathname = simplified(file_path)
-        .to_slash_lossy()
-        // The convert each part of the path to a URL-encoded string. (This
-        // avoids encoding the slashes.)
-        .split('/')
-        .map(|s| urlencoding::encode(s))
-        // Then put it all back together.
+pub fn path_to_url(
+    // The URL path segments which precede the file's path.
+    prefix: &str,
+    // The connection ID to place between the prefix and the file's path, when
+    // the URL needs one.
+    connection_id: Option<&str>,
+    // The path to convert.
+    file_path: &Path,
+    // Output: a URL naming the given file.
+) -> String {
+    // Convert each of the path's components to a URL path segment. A Windows
+    // path prefix is the only component whose text contains separators of its
+    // own -- the backslashes in `\\server\share` -- so each form of prefix
+    // needs its own translation; every other component becomes a single
+    // segment. Each verbatim prefix translates to the same segments as the
+    // legacy prefix naming the same file, so a path needs no simplification
+    // first.
+    let mut segments: Vec<String> = Vec::new();
+    for component in file_path.components() {
+        match component {
+            Component::Prefix(prefix_component) => match prefix_component.kind() {
+                // A drive letter forms one segment, such as `C:`.
+                Prefix::Disk(drive) | Prefix::VerbatimDisk(drive) => {
+                    segments.push(format!("{}:", drive as char));
+                }
+                // Spell a UNC path as a URL does: `//server/share`. The empty
+                // segment supplies the doubled slash, which identifies the URL
+                // as a UNC path when it's converted back to a path.
+                Prefix::UNC(server, share) | Prefix::VerbatimUNC(server, share) => {
+                    segments.push(String::new());
+                    segments.push(server.to_string_lossy().into_owned());
+                    segments.push(share.to_string_lossy().into_owned());
+                }
+                // A device namespace such as `\\.\COM1`, or a verbatim prefix
+                // naming neither a drive nor a share, doesn't refer to a file
+                // in a directory tree, so no URL names it. Pass its text
+                // through as one segment, which at least produces a readable
+                // error when the Client requests it.
+                Prefix::DeviceNS(_) | Prefix::Verbatim(_) => {
+                    warn!(
+                        "Unable to convert the path prefix of {} to a URL.",
+                        file_path.display()
+                    );
+                    segments.push(prefix_component.as_os_str().to_string_lossy().into_owned());
+                }
+            },
+            // Dropping the root directory avoids a doubled slash in the URL;
+            // the separator which precedes the next segment stands in for it.
+            Component::RootDir => {}
+            _ => segments.push(component.as_os_str().to_string_lossy().into_owned()),
+        }
+    }
+    // Percent-encode each segment, which avoids encoding the separators, then
+    // join the segments back into a path.
+    let pathname = segments
+        .iter()
+        .map(|segment| urlencoding::encode(segment))
         .collect::<Vec<_>>()
         .join("/");
-    // On Windows, path names start with a drive letter. On Linux/OS X, they
-    // start with a forward slash -- don't put a double forward slash in the
-    // resulting path.
-    let pathname = drop_leading_slash(&pathname);
     if let Some(connection_id) = connection_id {
         format!("{prefix}/{connection_id}/{pathname}")
     } else {

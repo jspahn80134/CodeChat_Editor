@@ -1,4 +1,4 @@
-Copyright (C) 2025 Bryan A. Jones.
+Copyright (C) 2026 Bryan A. Jones.
 
 This file is part of the CodeChat Editor.
 
@@ -21,6 +21,41 @@ Changelog
 
 [Github master](https://github.com/bjones1/CodeChat_Editor)
 -----------------------------------------------------------
+
+* No changes.
+
+Version 0.2.6-beta1 -- 2026-Sep-22
+----------------------------------
+
+* Fixed bug: the VSCode extension and the Server now run on Windows machines
+  which lack the Visual C++ redistributable.
+* A VSCode extension which cannot load the Server on Windows now names the
+  library it is missing, instead of reporting the Server itself as missing.
+
+Version 0.2.5-beta1 -- 2026-Sep-21
+----------------------------------
+
+* Improve diagnostics when first loading the CodeChat Editor Server in the
+  VSCode extension.
+
+Version 0.2.4 -- 2026-Sep-13
+----------------------------
+
+* Fixed bug: Windows UNC paths now work correctly.
+* Restored mangled contents of [README](README.md).
+
+Version 0.2.3 -- 2026-Sep-10
+----------------------------
+
+* Alpha: added support for <xref ref="cc-TRCKclsxwW"></xref> and
+  <xref ref="cc-swJ6a-FiK3"></xref>.
+* Improved Client editing experience -- fewer places exist where starting a new
+  heading, list item, etc. is removed immediately after creation.
+* Improved accessibility; added accessibility documentation to the
+  [user docs](README.md).
+
+Version 0.2.2 -- 2026-Aug-28
+----------------------------
 
 * Fix capture token validation and event upload against HTTPS capture service
   endpoints by enabling platform certificate verification and proxy support in

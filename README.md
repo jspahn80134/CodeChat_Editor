@@ -7,7 +7,15 @@ its basic features and use. In contrast, the [style guide](docs/style_guide.cpp)
 provides strategies for effectively employing the CodeChat Editor to improve the
 software development process.
 
-<iframe title="YouTube video player" src="https://www.youtube.com/embed/videoseries?si=QNrYCiTLVCpxpAbD&amp;list=PLOJAqFa3UI2FJncc-OBRPhh17NJXQP6ve" width="560" height="315" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen="allowfullscreen" referrerpolicy="strict-origin-when-cross-origin"></iframe>
+<p>
+  <iframe
+    width="560"
+    height="315"
+    src="https://www.youtube.com/embed/videoseries?si=QNrYCiTLVCpxpAbD&amp;list=PLOJAqFa3UI2FJncc-OBRPhh17NJXQP6ve"
+    allowfullscreen="allowfullscreen"
+    frameborder="0"
+  ></iframe>
+</p>
 
 Full manual
 -----------
@@ -23,51 +31,13 @@ Install the
 [CodeChat Editor extension for Visual Studio code](extensions/VSCode/README.md).
 For developers, see [building from source](docs/design.md).
 
-Research capture
-----------------
+Accessibility
+-------------
 
-The VS Code extension can record dissertation study capture events when a
-participant explicitly opts in. A participant first registers in the capture
-portal, which emails a capture token. In VS Code, run **Manage CodeChat Editor
-Capture** or **CodeChat Editor: Enter Capture Token** from the command palette,
-paste the token, then turn on consent and recording from the same capture
-manager.
-
-For detailed student/tester setup steps, see the
-[CodeChat Capture Token Setup Guide](docs/capture-token-setup-guide.html).
-
-The token is imported through the VS Code UI and persisted only in VS Code
-SecretStorage. It is never written to workspace settings, repository files, or a
-JSON configuration file. The extension asks CaptureWebService for token status;
-the status item and capture manager show whether the token is accepted,
-rejected, unavailable, or disabled by the portal. The participant ID used in
-events comes from that status response, not from the token text.
-
-CodeChat no longer connects directly to the remote capture database and no
-longer reads or stores database credentials. The old local JSON database-secret
-configuration path has been removed. Capture events now leave CodeChat only by
-calling CaptureWebService with the portal-issued bearer token; any database
-writer role remains inside the service deployment.
-
-Events are sanitized, written to a durable local FIFO spool in VS Code's global
-extension storage, then uploaded to CaptureWebService. Spooled events carry only
-a non-secret token hash/service identity so events from an old token are not
-uploaded under a new token. Offline
-recording is allowed only after the same token and service URL have previously
-been verified as capture-enabled; a token disabled by the portal remains
-disabled while the service is unavailable. If the network or service is
-unavailable after the token has been accepted at least once, queued events remain
-in the spool and upload as soon as the matching token and service are available
-again. The capture service endpoint can be changed in the user-level
-`CodeChatEditor.Capture.ServiceBaseUrl` setting; workspace values are ignored
-for this token-bearing endpoint. Token-bearing requests require HTTPS except for
-localhost development endpoints.
-
-Developer builds must keep the Rust `minreq` dependency compiled with
-`https-rustls-probe` and `proxy` support. Capture HTTPS requests validate with
-the host platform certificate store and honor standard proxy environment
-variables. Without HTTPS support, token validation and event upload to the AWS
-capture service report as unavailable even when the service itself is healthy.
+When using the CodeChat Editor Client, the accessibility features change
+depending on context (code block or dock block). In a code block, press Esc then
+press tab/shift-tab to navigate. In a doc block, tab alone navigates; to view
+all doc block keyboard shortcuts press Alt+0 (Windows, Linux) or ⌥0 (MacOS).
 
 Structure
 ---------
@@ -79,13 +49,11 @@ blocks. These blocks are separated by newlines; the image below shows the
 in the CodeChat Editor (using the VSCode extension). Specifically, this
 screenshot shows:
 
-* <span style="font-size: 20pt;">❶</span>: a doc block. Doc blocks must have one
-  space after the comment delimiter.
-* <span style="font-size: 20pt;">❷</span>: a code block. Comments on the same
-  line as code are not interpreted as doc blocks.
-* <span style="font-size: 20pt;">❸</span>: varying indents before a doc block.
-* <span style="font-size: 20pt;">❹</span>: [Markdown](https://commonmark.org/)
-  in a doc block; see a
+* ❶: a doc block. Doc blocks must have one space after the comment delimiter.
+* ❷: a code block. Comments on the same line as code are not interpreted as doc
+  blocks.
+* ❸: varying indents before a doc block.
+* ❹: [Markdown](https://commonmark.org/) in a doc block; see a
   [brief overview of Markdown](https://commonmark.org/help/).
 
 ![Image showing code blocks and doc blocks in Visual Studio Code](docs/code-blocks-doc-blocks.png)
@@ -105,6 +73,16 @@ Navigation
 Switching documents in the IDE likewise switches the document shown in the
 CodeChat Editor. Likewise, following hyperlinks in the CodeChat Editor to a
 local file loads that file in the IDE, as well as showing it in the Editor.
+
+<h2 id="cc-DscjSxRZHF">Projects</h2>
+
+The CodeChat Editor can either display a single file, or a project. In a
+project, the table of contents is displayed on the left, while a file within the
+project is displayed on the right. To create a project, simply place a file
+named `toc.md` at the root of your project [\[2\]](#notes); its contents define
+the table of contents. See the
+[new project template](https://github.com/bjones1/CodeChat_Editor/tree/main/new-project-template)
+for a simple example.
 
 References to other files
 -------------------------
@@ -129,6 +107,58 @@ docs/
   monitor.png
 ```
 
+<h3 id="cc-TRCKclsxwW">Cross-references</h3>
+
+Any HTML element with an id can be the target of either a hyperlink or a
+cross-reference. If the id resides in a file within a [project](#cc-DscjSxRZHF),
+then any file in that same project can refer to that id using a hyperlink or
+cross-reference. For example:
+
+| Source                              | Rendered                          |
+| ----------------------------------- | --------------------------------- |
+| `[Style guide](#cc-nNZ6Gs2uWD)`     | [Style guide](#cc-nNZ6Gs2uWD)     |
+| `<xref ref="cc-nNZ6Gs2uWD"></xref>` | <xref ref="cc-nNZ6Gs2uWD"></xref> |
+
+Alpha feature: first view the [style guide](docs/style_guide.cpp) to make the
+link above work. Opening the link doesn't (yet) work.
+
+In projects, each id must be unique throughout the entire project. To simplify
+the creation of unique ids, items assigned an `id="*"` with be replaced with a
+unique id, such as `id=cc-DscjSxRZHF`. This autogenerated id isn't automatically
+saved; you must make an edit to its containing file in the Client to save the
+resulting id.
+
+<h3 id="cc-swJ6a-FiK3">Gathering fragments</h3>
+
+Often, closely-related routines must be scattered across the source tree. For
+example, a client's HTTP request and the corresponding server-side endpoint
+which responds to that request are usually placed in separate files, even though
+these are tightly coupled. The CodeChat Editor therefore supports gathering
+these scattered fragments into one central location to better explain the code.
+To do so:
+
+1. In a doc block preceding a code fragment to gather, add a `<fragment
+   id="some_unique_id"></fragment>`. Do this for each fragment to gather. By
+   default, a fragment includes the doc block it was placed in along with the
+   next code/doc block. To include additional content, add the `following`
+   attribute: `<fragment id="some_unique_id"
+   following="number_of_following_code/doc_blocks_to_include"></fragment>`. For
+   example, the starting ID for the websocket connection between the CodeChat
+   Server (written in Rust) and the CodeChat Client (written in TypeScript) both
+   have `<fragment>` tags.
+2. In a doc block or a Markdown file, place an HTML element with both an id and
+   a `data-gather` attribute, such as `<h4 id="another_unique_id"
+   data-gather="some_unique_id1 some_unique_id2 ...">Gathered code</h4>`. Below
+   the the result of a gather tag for these fragments:
+
+<h4 data-gather="cc-kK31yjXjJd cc-Vk22aRyJ3s" id="cc-4YrLCPA4-S">
+  Starting websocket ID
+</h4>
+
+Alpha feature: first view [webserver.rs](server/src/webserver.rs) and
+[CodeChatEditorFramework.mts](client/src/CodeChatEditorFramework.mts). Opening
+the link doesn't (yet) work.
+
 Images
 ------
 
@@ -143,17 +173,6 @@ Likewise, the path to local images is relative to the current file's location
 The CodeChat Editor disallows drag-and-drop of images, the result is a mess --
 the image data is embedded directly in the source file. Avoid this; instead,
 place images in a separate file, then reference them as shown above.
-
-Projects
---------
-
-The CodeChat Editor can either display a single file, or a project. In a
-project, the table of contents is displayed on the left, while a file within the
-project is displayed on the right. To create a project, simply place a file
-named `toc.md` at the root of your project [\[2\]](#notes); its contents define
-the table of contents. See the
-[new project template](https://github.com/bjones1/CodeChat_Editor/tree/main/new-project-template)
-for a simple example.
 
 Mathematics
 -----------
@@ -206,9 +225,6 @@ graph TD; A --> B;
     </tr>
   </tbody>
 </table>
-
-The [Mermaid live editor](https://mermaid.live/) provide an focused environment
-for creating Mermaid chart.
 
 ### Graphviz
 
@@ -267,6 +283,14 @@ draw.io editor embeds source data into the resulting image, so the image below
 can be directly edited by that package:
 
 ![](docs/sample_diagram.drawio.svg)
+
+Research capture
+----------------
+
+The VS Code extension can record dissertation study capture events when a
+participant explicitly opts in. See the
+[capture token setup guide](capture-token-setup-guide.html) for more
+information.
 
 <a id="supported-languages"></a>Supported languages
 ---------------------------------------------------

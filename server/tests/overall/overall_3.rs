@@ -1,4 +1,4 @@
-// Copyright (C) 2025 Bryan A. Jones.
+// Copyright (C) 2026 Bryan A. Jones.
 //
 // This file is part of the CodeChat Editor. The CodeChat Editor is free
 // software: you can redistribute it and/or modify it under the terms of the GNU
@@ -13,12 +13,12 @@
 // You should have received a copy of the GNU General Public License along with
 // the CodeChat Editor. If not, see
 // [http://www.gnu.org/licenses](http://www.gnu.org/licenses).
-/// `overall_3.rs` - test the overall system
-/// ========================================
-///
-/// These are functional tests of the overall system, performed by attaching a
-/// testing IDE to generate commands then observe results, along with a browser
-/// tester.
+//! `overall_3.rs` - test the overall system
+//! ========================================
+//!
+//! These are functional tests of the overall system, performed by attaching a
+//! testing IDE to generate commands then observe results, along with a browser
+//! tester.
 // Imports
 // -------
 //
@@ -69,12 +69,11 @@ async fn test_7_core(
         Some((
             indoc!(
                 "
-                    # 1<br>
-                    # 2
+                    # 1<br>a
                     #
-                    # 4
+                    # 3
                     #
-                    # 6
+                    # 5
                     "
             )
             .to_string(),
@@ -120,7 +119,7 @@ async fn test_7_core(
     let tinymce_contents = driver.query(By::Id("TinyMCE-inst")).first().await.unwrap();
 
     // Move to the next lines.
-    for expected_line in [2, 4, 6] {
+    for expected_line in [1, 3, 5] {
         tinymce_contents.send_keys(Key::Down).await.unwrap();
 
         assert_eq!(
@@ -264,7 +263,7 @@ async fn test_8_core(
                         doc: vec![StringDiff {
                             from: 0,
                             to: None,
-                            insert: "# \u{a0}\n#\n".to_string(),
+                            insert: "# <p><br></p>\n#\n".to_string(),
                         },],
                         doc_blocks: vec![],
                         version,
@@ -344,9 +343,9 @@ async fn test_8_core(
                     },
                     source: CodeMirrorDiffable::Diff(CodeMirrorDiff {
                         doc: vec![StringDiff {
-                            from: 6,
+                            from: 16,
                             to: None,
-                            insert: "# \u{a0}\n#\n".to_string(),
+                            insert: "# <p><br></p>\n#\n".to_string(),
                         },],
                         doc_blocks: vec![],
                         version,
@@ -425,9 +424,9 @@ async fn test_8_core(
                     },
                     source: CodeMirrorDiffable::Diff(CodeMirrorDiff {
                         doc: vec![StringDiff {
-                            from: 22,
+                            from: 42,
                             to: None,
-                            insert: "#\n# \u{a0}\n".to_string(),
+                            insert: "#\n# <p><br></p>\n".to_string(),
                         },],
                         doc_blocks: vec![],
                         version,

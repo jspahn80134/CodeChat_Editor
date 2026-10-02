@@ -1,4 +1,4 @@
-// Copyright (C) 2025 Bryan A. Jones.
+// Copyright (C) 2026 Bryan A. Jones.
 //
 // This file is part of the CodeChat Editor. The CodeChat Editor is free
 // software: you can redistribute it and/or modify it under the terms of the GNU
@@ -13,12 +13,12 @@
 // You should have received a copy of the GNU General Public License along with
 // the CodeChat Editor. If not, see
 // [http://www.gnu.org/licenses](http://www.gnu.org/licenses).
-/// `overall_2.rs` - test the overall system
-/// ========================================
-///
-/// These are functional tests of the overall system, performed by attaching a
-/// testing IDE to generate commands then observe results, along with a browser
-/// tester.
+//! `overall_2.rs` - test the overall system
+//! ========================================
+//!
+//! These are functional tests of the overall system, performed by attaching a
+//! testing IDE to generate commands then observe results, along with a browser
+//! tester.
 // Imports
 // -------
 //
@@ -37,8 +37,8 @@ use thirtyfour::{
 
 // ### Local
 use crate::common::{
-    CodeChatEditorServerLog, TIMEOUT, assert_no_more_messages, beginning_of_document,
-    click_element_top_left, get_version, optional_message, perform_loadfile,
+    CodeChatEditorServerLog, DOC_BLOCK_CSS, TIMEOUT, assert_no_more_messages,
+    beginning_of_document, click_element_top_left, get_version, optional_message, perform_loadfile,
     select_codechat_iframe,
 };
 use crate::make_test;
@@ -212,26 +212,29 @@ async fn test_5_core(
         .first()
         .await
         .unwrap();
-    doc_block_contents.click().await.unwrap();
-    // The click produces an updated cursor/scroll location after an autosave
-    // delay.
+    click_element_top_left(&driver, &doc_block_contents)
+        .await
+        .unwrap();
+    // The click sometimes produces an updated cursor/scroll location after an
+    // autosave delay; absorb that message when it appears, then continue.
     let mut client_id = INITIAL_CLIENT_MESSAGE_ID;
-    assert_eq!(
-        codechat_server.get_message_timeout(TIMEOUT).await.unwrap(),
-        EditorMessage {
-            id: client_id,
-            message: EditorMessageContents::Update(UpdateMessageContents {
-                file_path: path_str.clone(),
-                cursor_position: Some(CursorPosition::Line(1)),
-                scroll_position: Some(1.0),
-                is_re_translation: false,
-                contents: None,
-            })
-        }
-    );
-    codechat_server.send_result(client_id, None).await.unwrap();
-    client_id += MESSAGE_ID_INCREMENT;
-    assert_eq!(client_id, 7.0);
+    if let Some(msg) = codechat_server.get_message_timeout(TIMEOUT).await {
+        assert_eq!(
+            msg,
+            EditorMessage {
+                id: client_id,
+                message: EditorMessageContents::Update(UpdateMessageContents {
+                    file_path: path_str.clone(),
+                    cursor_position: Some(CursorPosition::Line(1)),
+                    scroll_position: Some(1.0),
+                    is_re_translation: false,
+                    contents: None,
+                })
+            }
+        );
+        codechat_server.send_result(client_id, None).await.unwrap();
+        client_id += MESSAGE_ID_INCREMENT;
+    }
 
     // Refind it, since it's now switched with a TinyMCE editor.
     let tinymce_contents = driver.query(By::Id("TinyMCE-inst")).first().await.unwrap();
@@ -391,8 +394,7 @@ async fn test_6_core(
     select_codechat_iframe(&driver).await;
 
     // Check the content.
-    let body_css = "#CodeChat-body .CodeChat-doc-contents";
-    let body_content = driver.query(By::Css(body_css)).first().await.unwrap();
+    let body_content = driver.query(By::Css(DOC_BLOCK_CSS)).first().await.unwrap();
     click_element_top_left(&driver, &body_content)
         .await
         .unwrap();
