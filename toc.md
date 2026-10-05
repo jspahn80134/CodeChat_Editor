@@ -89,6 +89,8 @@ Implementation
   * Visual Studio Code
     * [Developer documentation](extensions/VSCode/developer.md)
     * [extension.ts](extensions/VSCode/src/extension.ts)
+    * [capture-activity.ts](extensions/VSCode/src/capture-activity.ts)
+      * [capture-activity.test.mjs](extensions/VSCode/src/capture-activity.test.mjs)
     * [capture-policy.ts](extensions/VSCode/src/capture-policy.ts)
       * [capture-policy.test.mjs](extensions/VSCode/src/capture-policy.test.mjs)
     * [lib.rs](extensions/VSCode/src/lib.rs)

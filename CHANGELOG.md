@@ -22,7 +22,10 @@ Changelog
 [Github master](https://github.com/bjones1/CodeChat_Editor)
 -----------------------------------------------------------
 
-* No changes.
+* Capture privacy-preserving active-file and editor-group changes, including
+  code-to-code transitions that do not change panes.
+* Split documentation activity across files into file-correct segments linked
+  by a shared activity episode, without collecting raw paths or open-tab lists.
 
 Version 0.2.6-beta1 -- 2026-Sep-22
 ----------------------------------

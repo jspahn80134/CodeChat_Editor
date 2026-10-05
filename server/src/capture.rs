@@ -51,7 +51,7 @@ use ts_rs::TS;
 static NEXT_CAPTURE_EVENT_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_SPOOL_FILE_ID: AtomicU64 = AtomicU64::new(1);
 
-const DEFAULT_CAPTURE_SCHEMA_VERSION: i32 = 2;
+const DEFAULT_CAPTURE_SCHEMA_VERSION: i32 = 3;
 const MAX_CAPTURE_BATCH_EVENTS: usize = 100;
 const MAX_CAPTURE_BATCH_BYTES: usize = 524_288;
 const INITIAL_RETRY_DELAY_MS: u64 = 1_000;
@@ -70,6 +70,8 @@ pub enum CaptureEventType {
     WriteCode,
     /// Editor activity moved between documentation and code contexts.
     SwitchPane,
+    /// The active file or anonymous editor group changed.
+    FileFocusChanged,
     /// Duration summary for a documentation/prose activity interval.
     DocSession,
     /// File save observed by the editor.
@@ -111,6 +113,7 @@ impl CaptureEventType {
             Self::WriteDoc => "write_doc",
             Self::WriteCode => "write_code",
             Self::SwitchPane => "switch_pane",
+            Self::FileFocusChanged => "file_focus_changed",
             Self::DocSession => "doc_session",
             Self::Save => "save",
             Self::Compile => "compile",
@@ -1780,6 +1783,11 @@ mod tests {
     }
 
     #[test]
+    fn default_capture_schema_version_is_three() {
+        assert_eq!(DEFAULT_CAPTURE_SCHEMA_VERSION, 3);
+    }
+
+    #[test]
     fn capture_event_type_uses_stable_serialized_strings() {
         assert_eq!(
             serde_json::to_value(CaptureEventType::WriteDoc).unwrap(),
@@ -1792,6 +1800,10 @@ mod tests {
         assert_eq!(
             serde_json::to_value(CaptureEventType::CaptureSettingsChanged).unwrap(),
             json!("capture_settings_changed")
+        );
+        assert_eq!(
+            serde_json::to_value(CaptureEventType::FileFocusChanged).unwrap(),
+            json!("file_focus_changed")
         );
         assert!(serde_json::from_value::<CaptureEventType>(json!("random")).is_err());
     }

@@ -114,10 +114,25 @@ VS Code extension -> local CodeChat server -> CaptureWebService HTTPS API
   -> API Gateway/Lambda -> SQS -> writer Lambda -> capture.events
 ```
 
+The capture schema is version 3. Each event has at most one privacy-preserving
+file hash; CodeChat does not collect the list of open tabs or raw file paths.
+The extension emits `file_focus_changed` when the active text file or anonymous
+editor group changes. Consecutive focus events reconstruct code-to-code and
+documentation-to-documentation navigation that `switch_pane` alone cannot
+represent. Losing text-editor focus emits a fileless transition.
+
+Documentation timing is stored as file-correct segments. Moving from one
+documentation file to another closes the old file's `doc_session`, starts a new
+segment for the newly focused file, and links both with the same
+`activity_episode_id` plus an increasing `segment_index`. Moving to code,
+another surface, or ending capture closes the segment against the file where it
+began. This prevents a later file from receiving an earlier file's duration.
+
 The verified extension-generated event stream includes `session_start`,
-`write_doc`, `reflection_prompt_inserted`, and `save`. Additional service
-contract tests submit representative well-formed event batches for optional
-study/debug/build event types through the same public HTTPS API.
+`file_focus_changed`, `write_doc`, `reflection_prompt_inserted`, and `save`.
+Additional service contract tests submit representative well-formed event
+batches for optional study/debug/build event types through the same public HTTPS
+API.
 
 <a id="an-implementation"></a>Architecture
 ------------------------------------------

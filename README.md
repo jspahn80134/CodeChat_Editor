@@ -290,7 +290,9 @@ Research capture
 The VS Code extension can record dissertation study capture events when a
 participant explicitly opts in. See the
 [capture token setup guide](capture-token-setup-guide.html) for more
-information.
+information. Capture records privacy-preserving active-file transitions and
+file-correct documentation activity segments, but never records raw local paths
+or an inventory of open tabs.
 
 <a id="supported-languages"></a>Supported languages
 ---------------------------------------------------

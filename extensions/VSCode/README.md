@@ -64,6 +64,12 @@ user-level
 for this token-bearing endpoint. Token-bearing service requests must use HTTPS,
 except for localhost development endpoints.
 
+Capture records the focused file for each applicable event as a local-path hash.
+It does not collect raw paths or the inventory of open tabs. Active-file changes
+produce `file_focus_changed` events, including code-to-code navigation. A
+documentation interval that crosses files is split into file-correct segments
+linked by an anonymous activity episode ID.
+
 Developer builds must compile the bundled Rust server with `minreq`
 `https-rustls-probe` and `proxy` support. Capture HTTPS requests validate with
 the host platform certificate store and honor standard proxy environment

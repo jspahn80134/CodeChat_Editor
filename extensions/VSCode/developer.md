@@ -46,4 +46,13 @@ Release procedure
 Tests
 -----
 
-TODO: tests are missing.
+Run the focused capture tests from this directory with::
+
+```
+npm run test:capture
+```
+
+This command exercises capture policy and the multi-file activity state machine,
+including active-file transitions and file-correct documentation segments. Run
+the complete repository test command from the repository root for Rust and
+browser integration coverage.

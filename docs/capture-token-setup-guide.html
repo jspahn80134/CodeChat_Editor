@@ -442,18 +442,21 @@
       <p>
         After turning capture on and editing a file, the same output channel
         should show queued capture events such as <code>session_start</code>,
-        <code>save</code>, <code>write_doc</code>, or <code>write_code</code>,
-        depending on the activity performed.
+        <code>file_focus_changed</code>, <code>save</code>,
+        <code>write_doc</code>, or <code>write_code</code>, depending on the
+        activity performed.
       </p>
     </section>
 
     <section class="panel">
-      <h2>Token Privacy</h2>
+      <h2>Capture and Token Privacy</h2>
       <ul class="checklist">
         <li>The email contains the clear access token. Treat it like a password.</li>
         <li>Do not paste the token into source code, assignments, screenshots, chat messages, or bug reports.</li>
         <li>CodeChat stores the token in VS Code SecretStorage, not in workspace settings or repository files.</li>
         <li>The capture system stores and checks only a protected hash of the token.</li>
+        <li>CodeChat records active-file changes using a one-way hash of the local path; it does not upload raw local paths or a list of open tabs.</li>
+        <li>When documentation work moves between files, CodeChat records separate file-correct timing segments joined by an anonymous activity episode ID.</li>
       </ul>
     </section>
 

@@ -155,9 +155,11 @@ COMMENT ON TABLE public.events IS
     'CodeChat dissertation capture events. Course, group, assignment, condition, and task context are joined during analysis from participant/date mappings.';
 COMMENT ON COLUMN public.events.event_id IS 'Opaque stable per-event ID for correlation and future deduplication; not used for event ordering.';
 COMMENT ON COLUMN public.events.sequence_number IS 'Client-local event order within one VS Code extension session, useful for ordering and detecting gaps.';
+COMMENT ON COLUMN public.events.schema_version IS 'Capture payload schema version. Version 3 adds privacy-preserving file-focus transitions and file-correct documentation-session segments.';
 COMMENT ON COLUMN public.events.user_id IS 'Pseudonymous participant UUID authorized by the portal-issued capture token.';
 COMMENT ON COLUMN public.events.session_id IS 'Capture session UUID emitted by the VS Code extension.';
 COMMENT ON COLUMN public.events.file_hash IS 'SHA-256 hash of the local file path; raw local paths are not stored.';
+COMMENT ON COLUMN public.events.event_type IS 'Canonical event name. file_focus_changed records active-file or anonymous editor-group transitions without collecting the open-tab inventory.';
 COMMENT ON COLUMN public.events."timestamp" IS 'Server receive/record timestamp in UTC.';
 COMMENT ON COLUMN public.events.client_tz_offset_min IS 'Client timezone offset in minutes, used with timestamp to derive local time of day without storing location or full timezone name.';
 COMMENT ON COLUMN public.events.data IS 'Event-specific JSON payload. Known telemetry metadata lives in typed columns.';
